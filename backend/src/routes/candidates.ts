@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { prisma } from '../db/client';
 import { createError } from '../middleware/error';
+import { logEvent } from '../services/monitoring.service';
 import { z } from 'zod';
 
 const router = Router();
@@ -18,6 +19,7 @@ const updateCandidateSchema = z.object({
       'NEUTRAL',
       'REPLIED',
       'NEEDS_REVIEW',
+      'IGNORED',
     ])
     .optional(),
   notes: z.string().optional(),
@@ -49,8 +51,17 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const limit = parseInt(qs(req.query.limit) ?? '50');
     const skip = (page - 1) * limit;
 
+    const includeIgnored = qs(req.query.includeIgnored) === 'true';
+
     const where: Record<string, unknown> = {};
-    if (status) where.status = status;
+    if (status) {
+      where.status = status;
+    } else if (!includeIgnored) {
+      // Default view hides ignored candidates so dismissed people don't clutter
+      // the dashboard. Caller can pass ?status=IGNORED or ?includeIgnored=true
+      // to see them.
+      where.status = { not: 'IGNORED' };
+    }
     if (mailboxId) where.mailboxId = mailboxId;
 
     const [candidates, total] = await Promise.all([
@@ -132,6 +143,82 @@ router.patch('/:id', async (req: Request, res: Response, next: NextFunction) => 
       where: { id },
       data: parsed.data,
     });
+
+    res.json({ success: true, data: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/candidates/:id/ignore
+// Dismiss a candidate from the dashboard. Sets status=IGNORED and atomically
+// discards every live (PENDING/APPROVED) draft on the candidate's threads so
+// dismissed people stop showing up in the drafts queue.
+router.post('/:id/ignore', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = String(req.params.id);
+    const candidate = await prisma.candidate.findUnique({
+      where: { id },
+      include: { threads: { select: { id: true } } },
+    });
+    if (!candidate) {
+      return next(createError('Candidate not found', 404));
+    }
+
+    const threadIds = candidate.threads.map((t) => t.id);
+
+    const [updated, discardResult] = await prisma.$transaction([
+      prisma.candidate.update({
+        where: { id },
+        data: { status: 'IGNORED' },
+      }),
+      prisma.emailDraft.updateMany({
+        where: {
+          threadId: { in: threadIds },
+          status: { in: ['PENDING', 'APPROVED'] },
+        },
+        data: { status: 'DISCARDED' },
+      }),
+    ]);
+
+    await logEvent(
+      'CANDIDATE_IGNORED',
+      {
+        candidateId: id,
+        email: candidate.email,
+        draftsDiscarded: discardResult.count,
+      },
+      'INFO'
+    );
+
+    res.json({ success: true, data: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/candidates/:id/unignore
+// Manual undo. We lose the original classification — acceptable since this is
+// a deliberate recruiter action. Reverts to NEUTRAL; the next inbound message
+// will re-classify if applicable. Does NOT regenerate drafts.
+router.post('/:id/unignore', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = String(req.params.id);
+    const candidate = await prisma.candidate.findUnique({ where: { id } });
+    if (!candidate) {
+      return next(createError('Candidate not found', 404));
+    }
+
+    const updated = await prisma.candidate.update({
+      where: { id },
+      data: { status: 'NEUTRAL' },
+    });
+
+    await logEvent(
+      'CANDIDATE_UNIGNORED',
+      { candidateId: id, email: candidate.email },
+      'INFO'
+    );
 
     res.json({ success: true, data: updated });
   } catch (err) {

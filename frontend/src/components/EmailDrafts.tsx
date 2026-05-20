@@ -12,7 +12,7 @@ import {
 } from '../lib/api';
 import axios from 'axios';
 import { cn, formatTimeAgo } from '../lib/utils';
-import { Check, X, Send, Edit2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { Check, X, Send, RefreshCw, ChevronDown, ChevronUp, Pencil } from 'lucide-react';
 
 const PREVIEW_LINE_LIMIT = 12;
 
@@ -153,6 +153,8 @@ function DraftCard({
     setEditing(false);
   };
 
+  const isPending = draft.status === 'PENDING';
+
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
       {/* Header */}
@@ -180,15 +182,66 @@ function DraftCard({
           <p className="text-gray-400 text-sm truncate">{subject}</p>
           <p className="text-gray-500 text-xs mt-1 line-clamp-2">{draft.bodyText}</p>
         </div>
-        <div className="flex items-center gap-2 ml-4 flex-shrink-0">
-          <span className="text-gray-600 text-xs">{formatTimeAgo(draft.createdAt)}</span>
+        <div
+          className="flex items-center gap-1 ml-4 flex-shrink-0"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span className="text-gray-600 text-xs mr-1">{formatTimeAgo(draft.createdAt)}</span>
+          {isPending && (
+            <>
+              <button
+                onClick={() => onApprove(draft.id)}
+                disabled={regenerating}
+                title="Approve draft"
+                aria-label="Approve draft"
+                className="p-1.5 rounded-md text-green-400 hover:bg-green-900/40 hover:text-green-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Check className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => onDiscard(draft.id)}
+                disabled={regenerating}
+                title="Discard draft"
+                aria-label="Discard draft"
+                className="p-1.5 rounded-md text-red-400 hover:bg-red-900/40 hover:text-red-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => onRegenerate(draft.id)}
+                disabled={regenerating}
+                title={regenerating ? 'Regenerating…' : 'Regenerate draft'}
+                aria-label="Regenerate draft"
+                className="p-1.5 rounded-md text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RefreshCw className={cn('w-4 h-4', regenerating && 'animate-spin')} />
+              </button>
+              <button
+                onClick={() => {
+                  setExpanded(true);
+                  setEditing(true);
+                }}
+                disabled={regenerating}
+                title="Edit draft"
+                aria-label="Edit draft"
+                className="p-1.5 rounded-md text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
+            </>
+          )}
           {expanded ? (
-            <ChevronUp className="w-4 h-4 text-gray-500" />
+            <ChevronUp className="w-4 h-4 text-gray-500 ml-1" />
           ) : (
-            <ChevronDown className="w-4 h-4 text-gray-500" />
+            <ChevronDown className="w-4 h-4 text-gray-500 ml-1" />
           )}
         </div>
       </div>
+      {isPending && regenerateError && (
+        <div className="px-4 pb-3 -mt-2">
+          <p className="text-red-400 text-xs">{regenerateError}</p>
+        </div>
+      )}
 
       {/* Expanded content */}
       {expanded && (
@@ -232,49 +285,6 @@ function DraftCard({
               </div>
             )}
           </div>
-
-          {/* Actions */}
-          {draft.status === 'PENDING' && !editing && (
-            <div className="px-4 pb-4 space-y-2">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => onApprove(draft.id)}
-                  disabled={regenerating}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-green-700 hover:bg-green-600 text-white text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  Approve
-                </button>
-                <button
-                  onClick={() => setEditing(true)}
-                  disabled={regenerating}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                  Edit
-                </button>
-                <button
-                  onClick={() => onDiscard(draft.id)}
-                  disabled={regenerating}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-900/60 hover:bg-red-800 text-red-300 text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <X className="w-3.5 h-3.5" />
-                  Discard
-                </button>
-                <button
-                  onClick={() => onRegenerate(draft.id)}
-                  disabled={regenerating}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <RefreshCw className={cn('w-3.5 h-3.5', regenerating && 'animate-spin')} />
-                  {regenerating ? 'Regenerating…' : 'Regenerate'}
-                </button>
-              </div>
-              {regenerateError && (
-                <p className="text-red-400 text-xs">{regenerateError}</p>
-              )}
-            </div>
-          )}
 
           {draft.status === 'APPROVED' && (
             <div className="flex items-center gap-2 px-4 pb-4">

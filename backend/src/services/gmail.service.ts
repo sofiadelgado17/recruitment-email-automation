@@ -343,6 +343,27 @@ async function classifyAndDraft(opts: {
     return;
   }
 
+  // If the recruiter has explicitly ignored this candidate, the message is
+  // already stored (we don't want to drop data) but we skip classification
+  // and draft generation entirely. Equivalent to muting the sender.
+  const ignoredCandidate = await prisma.candidate.findUnique({
+    where: { email: parsed.fromAddress },
+    select: { id: true, status: true },
+  });
+  if (ignoredCandidate?.status === 'IGNORED') {
+    await logEvent(
+      'MESSAGE_FROM_IGNORED_CANDIDATE',
+      {
+        mailboxId: mailbox.id,
+        candidateId: ignoredCandidate.id,
+        messageId: parsed.externalMessageId,
+        fromAddress: parsed.fromAddress,
+      },
+      'INFO'
+    );
+    return;
+  }
+
   // Pull every prior message in this thread (ordered oldest → newest) so we
   // can both (a) feed thread context into the classifier and (b) reuse the
   // list as the draft-generation history below.

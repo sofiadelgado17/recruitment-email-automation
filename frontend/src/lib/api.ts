@@ -63,7 +63,8 @@ export interface Candidate {
     | 'NOT_INTERESTED'
     | 'NEUTRAL'
     | 'REPLIED'
-    | 'NEEDS_REVIEW';
+    | 'NEEDS_REVIEW'
+    | 'IGNORED';
   source?: string;
   notes?: string;
   mailboxId?: string;
@@ -171,6 +172,7 @@ export async function fetchCandidates(filters?: {
   mailboxId?: string;
   page?: number;
   limit?: number;
+  includeIgnored?: boolean;
 }): Promise<PaginatedResponse<Candidate>> {
   const res = await api.get('/candidates', { params: filters });
   return res.data as PaginatedResponse<Candidate>;
@@ -186,6 +188,16 @@ export async function updateCandidate(
   data: Partial<Candidate>
 ): Promise<SingleResponse<Candidate>> {
   const res = await api.patch(`/candidates/${id}`, data);
+  return res.data as SingleResponse<Candidate>;
+}
+
+export async function ignoreCandidate(id: string): Promise<SingleResponse<Candidate>> {
+  const res = await api.post(`/candidates/${id}/ignore`);
+  return res.data as SingleResponse<Candidate>;
+}
+
+export async function unignoreCandidate(id: string): Promise<SingleResponse<Candidate>> {
+  const res = await api.post(`/candidates/${id}/unignore`);
   return res.data as SingleResponse<Candidate>;
 }
 
