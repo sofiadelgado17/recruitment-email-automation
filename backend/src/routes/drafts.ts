@@ -28,6 +28,86 @@ const draftWithThreadInclude = {
   },
 } as const;
 
+interface OriginalMessagePayload {
+  id: string;
+  fromAddress: string;
+  fromName: string | null;
+  subject: string;
+  bodyText: string | null;
+  bodyHtml: string | null;
+  receivedAt: Date;
+}
+
+interface MessageLike {
+  id: string;
+  externalMessageId: string;
+  fromAddress: string;
+  fromName: string | null;
+  subject: string;
+  bodyText: string | null;
+  bodyHtml: string | null;
+  receivedAt: Date;
+}
+
+interface MailboxLike {
+  emailAddress: string;
+}
+
+/**
+ * Pick the original inbound message a draft is responding to.
+ *
+ * Preference order:
+ *  1. The message whose externalMessageId matches the draft's inReplyToMessageId.
+ *  2. Otherwise, the most recent inbound message in the thread
+ *     (i.e. fromAddress !== mailbox.emailAddress).
+ *
+ * Returns null when the thread has no inbound message we can attribute to.
+ */
+function pickOriginalMessage(
+  messages: MessageLike[],
+  mailbox: MailboxLike,
+  inReplyToMessageId: string | null
+): OriginalMessagePayload | null {
+  if (!messages.length) return null;
+
+  const mailboxAddress = mailbox.emailAddress.toLowerCase();
+  const isInbound = (m: MessageLike) => m.fromAddress.toLowerCase() !== mailboxAddress;
+
+  // 1. Exact reply target via Gmail message id.
+  if (inReplyToMessageId) {
+    const exact = messages.find((m) => m.externalMessageId === inReplyToMessageId);
+    if (exact) {
+      return {
+        id: exact.id,
+        fromAddress: exact.fromAddress,
+        fromName: exact.fromName,
+        subject: exact.subject,
+        bodyText: exact.bodyText,
+        bodyHtml: exact.bodyHtml,
+        receivedAt: exact.receivedAt,
+      };
+    }
+  }
+
+  // 2. Most recent inbound message in the thread.
+  const inbound = messages
+    .filter(isInbound)
+    .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
+
+  const latest = inbound[0];
+  if (!latest) return null;
+
+  return {
+    id: latest.id,
+    fromAddress: latest.fromAddress,
+    fromName: latest.fromName,
+    subject: latest.subject,
+    bodyText: latest.bodyText,
+    bodyHtml: latest.bodyHtml,
+    receivedAt: latest.receivedAt,
+  };
+}
+
 // GET /api/drafts
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -45,6 +125,19 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
         include: {
           thread: {
             include: {
+              messages: {
+                orderBy: { receivedAt: 'desc' },
+                select: {
+                  id: true,
+                  externalMessageId: true,
+                  fromAddress: true,
+                  fromName: true,
+                  subject: true,
+                  bodyText: true,
+                  bodyHtml: true,
+                  receivedAt: true,
+                },
+              },
               candidate: {
                 select: { id: true, name: true, email: true },
               },
@@ -61,7 +154,19 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       prisma.emailDraft.count({ where }),
     ]);
 
-    res.json({ success: true, data: drafts, meta: { total, page, limit } });
+    const data = drafts.map((draft) => {
+      const originalMessage = pickOriginalMessage(
+        draft.thread.messages,
+        draft.thread.mailbox,
+        draft.inReplyToMessageId
+      );
+      // Drop the bulk-fetched messages from the wire payload — the list view
+      // only needs the resolved originalMessage.
+      const { messages: _messages, ...threadRest } = draft.thread;
+      return { ...draft, thread: threadRest, originalMessage };
+    });
+
+    res.json({ success: true, data, meta: { total, page, limit } });
   } catch (err) {
     next(err);
   }
@@ -76,7 +181,7 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
       include: {
         thread: {
           include: {
-            messages: { orderBy: { receivedAt: 'asc' } },
+            messages: { orderBy: { receivedAt: 'desc' } },
             candidate: true,
             mailbox: true,
           },
@@ -88,7 +193,13 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
       return next(createError('Draft not found', 404));
     }
 
-    res.json({ success: true, data: draft });
+    const originalMessage = pickOriginalMessage(
+      draft.thread.messages,
+      draft.thread.mailbox,
+      draft.inReplyToMessageId
+    );
+
+    res.json({ success: true, data: { ...draft, originalMessage } });
   } catch (err) {
     next(err);
   }

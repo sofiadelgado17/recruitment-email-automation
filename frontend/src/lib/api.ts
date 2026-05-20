@@ -100,6 +100,16 @@ export interface EmailMessage {
   createdAt: string;
 }
 
+export interface OriginalMessage {
+  id: string;
+  fromAddress: string;
+  fromName: string | null;
+  subject: string;
+  bodyText: string | null;
+  bodyHtml: string | null;
+  receivedAt: string;
+}
+
 export interface EmailDraft {
   id: string;
   threadId: string;
@@ -115,6 +125,7 @@ export interface EmailDraft {
   sentAt?: string;
   createdAt: string;
   updatedAt: string;
+  originalMessage?: OriginalMessage | null;
 }
 
 export interface HealthStatus {

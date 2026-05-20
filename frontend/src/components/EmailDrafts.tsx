@@ -7,9 +7,106 @@ import {
   sendDraft,
   updateDraft,
   type EmailDraft,
+  type OriginalMessage,
 } from '../lib/api';
 import { cn, formatTimeAgo } from '../lib/utils';
 import { Check, X, Send, Edit2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+
+const PREVIEW_LINE_LIMIT = 12;
+
+/**
+ * Strip HTML tags from a string and collapse whitespace.
+ * We never trust candidate HTML — so when bodyText is missing we degrade
+ * gracefully by flattening the HTML to plain text instead of rendering it.
+ */
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function getOriginalBodyPlainText(original: OriginalMessage): string {
+  if (original.bodyText && original.bodyText.trim().length > 0) {
+    return original.bodyText;
+  }
+  if (original.bodyHtml) {
+    return htmlToPlainText(original.bodyHtml);
+  }
+  return '';
+}
+
+function formatOriginalDate(value: string): string {
+  const d = new Date(value);
+  return d.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function OriginalMessageBlock({ original }: { original: OriginalMessage }) {
+  const [showFull, setShowFull] = useState(false);
+  const body = getOriginalBodyPlainText(original);
+  const lines = body.split('\n');
+  const isLong = lines.length > PREVIEW_LINE_LIMIT;
+  const visibleBody = showFull || !isLong ? body : lines.slice(0, PREVIEW_LINE_LIMIT).join('\n');
+
+  const senderLabel = original.fromName
+    ? `${original.fromName} <${original.fromAddress}>`
+    : original.fromAddress;
+
+  return (
+    <div className="bg-gray-950/80 border border-gray-800 border-l-2 border-l-zinc-500 rounded-lg p-3 mb-3">
+      <div className="text-[11px] uppercase tracking-wide text-gray-500 font-medium mb-2">
+        Original message
+      </div>
+      <div className="font-mono text-xs text-gray-400 space-y-0.5 mb-2">
+        <div>
+          <span className="text-gray-500">From: </span>
+          <span className="text-gray-300">{senderLabel}</span>
+        </div>
+        <div>
+          <span className="text-gray-500">Date: </span>
+          <span className="text-gray-300">{formatOriginalDate(original.receivedAt)}</span>
+        </div>
+        <div>
+          <span className="text-gray-500">Subject: </span>
+          <span className="text-gray-300">{original.subject}</span>
+        </div>
+      </div>
+      {body ? (
+        <>
+          <pre className="text-gray-300 text-sm whitespace-pre-wrap font-sans leading-relaxed">
+            {visibleBody}
+          </pre>
+          {isLong && (
+            <button
+              onClick={() => setShowFull((v) => !v)}
+              className="mt-2 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              {showFull ? 'Show less' : 'Show more'}
+            </button>
+          )}
+        </>
+      ) : (
+        <p className="text-gray-500 text-sm italic">(no message body)</p>
+      )}
+    </div>
+  );
+}
 
 const CLASS_COLORS: Record<EmailDraft['classification'], string> = {
   INTERESTED: 'bg-green-900/60 text-green-300 border border-green-700',
@@ -89,6 +186,7 @@ function DraftCard({
       {expanded && (
         <div className="border-t border-gray-800">
           <div className="p-4">
+            {draft.originalMessage && <OriginalMessageBlock original={draft.originalMessage} />}
             {editing ? (
               <div className="space-y-3">
                 <textarea
