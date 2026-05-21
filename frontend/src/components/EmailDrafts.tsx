@@ -192,7 +192,7 @@ function DraftCard({
               <button
                 onClick={() => onApprove(draft.id)}
                 disabled={regenerating}
-                title="Approve draft"
+                title="Approve draft (creates a Gmail draft you can review before sending)"
                 aria-label="Approve draft"
                 className="p-1.5 rounded-md text-green-400 hover:bg-green-900/40 hover:text-green-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -201,7 +201,7 @@ function DraftCard({
               <button
                 onClick={() => onDiscard(draft.id)}
                 disabled={regenerating}
-                title="Discard draft"
+                title="Discard draft (won't be sent; future emails from this candidate will still create new drafts unless you Ignore them)"
                 aria-label="Discard draft"
                 className="p-1.5 rounded-md text-red-400 hover:bg-red-900/40 hover:text-red-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -210,7 +210,11 @@ function DraftCard({
               <button
                 onClick={() => onRegenerate(draft.id)}
                 disabled={regenerating}
-                title={regenerating ? 'Regenerating…' : 'Regenerate draft'}
+                title={
+                  regenerating
+                    ? 'Regenerating…'
+                    : 'Regenerate draft (re-runs Claude using the latest persona + prompt)'
+                }
                 aria-label="Regenerate draft"
                 className="p-1.5 rounded-md text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -222,19 +226,21 @@ function DraftCard({
                   setEditing(true);
                 }}
                 disabled={regenerating}
-                title="Edit draft"
-                aria-label="Edit draft"
+                title="Edit draft body"
+                aria-label="Edit draft body"
                 className="p-1.5 rounded-md text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Pencil className="w-4 h-4" />
               </button>
             </>
           )}
-          {expanded ? (
-            <ChevronUp className="w-4 h-4 text-gray-500 ml-1" />
-          ) : (
-            <ChevronDown className="w-4 h-4 text-gray-500 ml-1" />
-          )}
+          <span title="Expand to see full body + original candidate email" className="flex">
+            {expanded ? (
+              <ChevronUp className="w-4 h-4 text-gray-500 ml-1" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-gray-500 ml-1" />
+            )}
+          </span>
         </div>
       </div>
       {isPending && regenerateError && (

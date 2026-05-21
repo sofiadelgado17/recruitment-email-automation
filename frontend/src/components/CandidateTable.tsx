@@ -312,7 +312,7 @@ export default function CandidateTable({ mailboxId }: Props) {
                                 ignoreMutation.isPending &&
                                 ignoreMutation.variables === candidate.id
                               }
-                              title="Ignore candidate (hide & discard drafts)"
+                              title="Ignore candidate (mute future drafts; reversible)"
                               aria-label="Ignore candidate"
                               className="p-1.5 rounded-md text-gray-500 hover:bg-red-900/40 hover:text-red-400 transition-colors disabled:opacity-50"
                             >
