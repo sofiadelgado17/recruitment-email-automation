@@ -16,6 +16,7 @@ interface MailboxSyncHealth {
   messagesLast24h: number;
   pendingDrafts: number;
   candidatesNeedsReview: number;
+  webhookErrorsLast24h: number;
 }
 
 /**
@@ -38,15 +39,35 @@ function parseDetails(raw: string): Record<string, unknown> {
 // Auth-gated by the user JWT (mounted with requireAuth in app.ts). Returns
 // per-mailbox sync health for the dashboard / debug tooling: watch-expiry
 // countdown, last sync time, last reconciliation result, message + draft +
-// review counts. Read-only — does not trigger any sync work.
+// review + webhook-error counts. Read-only — does not trigger any sync work.
 router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const now = Date.now();
     const dayAgo = new Date(now - 24 * 60 * 60 * 1000);
 
-    const mailboxes = await prisma.mailbox.findMany({
-      orderBy: { createdAt: 'asc' },
-    });
+    // Pull all WEBHOOK_HANDLER_ERROR events in the last 24h once, then count
+    // per mailbox below by matching emailAddress in `details`. SystemLog
+    // doesn't have a mailboxId column for these so JS-side bucketing is the
+    // simplest correct option.
+    const [mailboxes, recentWebhookErrors] = await Promise.all([
+      prisma.mailbox.findMany({ orderBy: { createdAt: 'asc' } }),
+      prisma.systemLog.findMany({
+        where: {
+          event: 'WEBHOOK_HANDLER_ERROR',
+          createdAt: { gte: dayAgo },
+        },
+        select: { details: true },
+        take: 500,
+      }),
+    ]);
+
+    const errorsByEmail = new Map<string, number>();
+    for (const log of recentWebhookErrors) {
+      const details = parseDetails(log.details);
+      const email = typeof details.emailAddress === 'string' ? details.emailAddress : null;
+      if (!email) continue;
+      errorsByEmail.set(email, (errorsByEmail.get(email) ?? 0) + 1);
+    }
 
     const health: MailboxSyncHealth[] = await Promise.all(
       mailboxes.map(async (mb) => {
@@ -113,6 +134,7 @@ router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
           messagesLast24h,
           pendingDrafts,
           candidatesNeedsReview,
+          webhookErrorsLast24h: errorsByEmail.get(mb.emailAddress) ?? 0,
         };
       })
     );

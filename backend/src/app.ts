@@ -21,6 +21,12 @@ import { logEvent } from './services/monitoring.service';
 
 const app = express();
 
+// Vercel terminates TLS at its edge proxy and forwards the client IP via
+// X-Forwarded-For. Without this, express-rate-limit throws a ValidationError
+// on every /api/* request and `req.ip` reports the proxy IP instead of the
+// real client IP.
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 

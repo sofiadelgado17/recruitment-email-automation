@@ -187,6 +187,7 @@ function MailboxHealthSection({
 }) {
   if (!loading && data.length === 0) return null;
   const anyDrift = data.some((d) => d.lastReconciliationFoundMissing > 0);
+  const anyWebhookErrors = data.some((d) => d.webhookErrorsLast24h > 0);
 
   return (
     <div>
@@ -196,6 +197,11 @@ function MailboxHealthSection({
         {anyDrift && (
           <span className="ml-1 px-2 py-0.5 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-full text-xs font-medium">
             drift detected
+          </span>
+        )}
+        {anyWebhookErrors && (
+          <span className="ml-1 px-2 py-0.5 bg-red-500/20 text-red-400 border border-red-500/30 rounded-full text-xs font-medium">
+            webhook errors today
           </span>
         )}
       </h2>
@@ -211,12 +217,15 @@ function MailboxHealthSection({
                 <th className="text-left px-4 py-2 font-medium hidden sm:table-cell">Msgs / 24h</th>
                 <th className="text-left px-4 py-2 font-medium hidden md:table-cell">Last reconciled</th>
                 <th className="text-left px-4 py-2 font-medium">Missing found</th>
+                <th className="text-left px-4 py-2 font-medium">Webhook errors / 24h</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
               {data.map((row) => {
                 const driftTone =
                   row.lastReconciliationFoundMissing > 0 ? 'text-amber-400' : 'text-gray-500';
+                const webhookErrTone =
+                  row.webhookErrorsLast24h > 0 ? 'text-red-400' : 'text-gray-500';
                 const recon = row.lastReconciliationAt
                   ? new Date(row.lastReconciliationAt).toLocaleString(undefined, {
                       month: 'short',
@@ -249,6 +258,9 @@ function MailboxHealthSection({
                     <td className="px-4 py-2 text-gray-400 hidden md:table-cell">{recon}</td>
                     <td className={cn('px-4 py-2 font-mono', driftTone)}>
                       {row.lastReconciliationFoundMissing}
+                    </td>
+                    <td className={cn('px-4 py-2 font-mono', webhookErrTone)}>
+                      {row.webhookErrorsLast24h}
                     </td>
                   </tr>
                 );
