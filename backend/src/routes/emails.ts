@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { prisma } from '../db/client';
 import { createError } from '../middleware/error';
+import { z } from 'zod';
 
 const router = Router();
 
@@ -10,13 +11,24 @@ function qs(val: unknown): string | undefined {
   return undefined;
 }
 
+const paginationSchema = z.object({
+  page: z.coerce.number().int().min(1).max(10000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
 // GET /api/emails/threads
 router.get('/threads', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const mailboxId = qs(req.query.mailboxId);
     const candidateId = qs(req.query.candidateId);
-    const page = parseInt(qs(req.query.page) ?? '1');
-    const limit = parseInt(qs(req.query.limit) ?? '50');
+    const paged = paginationSchema.safeParse({
+      page: qs(req.query.page),
+      limit: qs(req.query.limit),
+    });
+    if (!paged.success) {
+      return next(createError(paged.error.message, 400));
+    }
+    const { page, limit } = paged.data;
     const skip = (page - 1) * limit;
 
     const where: Record<string, unknown> = {};

@@ -21,13 +21,21 @@ export function errorHandler(
   const statusCode = err.statusCode ?? 500;
   const message = err.isOperational ? err.message : 'Internal server error';
 
-  if (process.env.NODE_ENV === 'development') {
-    console.error('[Error]', err);
-  }
+  // Always log the full stack server-side so we can debug.
+  console.error('[Error]', err);
+
+  // Only expose stack to the client when we're truly running on a developer
+  // machine: NODE_ENV !== 'production' AND not on Vercel (Vercel sometimes
+  // leaves NODE_ENV unset on preview deploys, which previously could leak
+  // stacks). Even then, never include stack on 5xx — those frequently expose
+  // internal paths/credentials embedded in stack traces.
+  const isLocalDev =
+    process.env.NODE_ENV !== 'production' && !process.env.VERCEL;
+  const exposeStack = isLocalDev && statusCode < 500;
 
   res.status(statusCode).json({
     success: false,
     error: message,
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
+    ...(exposeStack && { stack: err.stack }),
   });
 }

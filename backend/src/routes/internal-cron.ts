@@ -59,11 +59,14 @@ router.post(
         return;
       }
 
-      // Cap total work at ~50s to stay safely inside Vercel's 60s function
-      // timeout. If we hit the deadline mid-mailbox the remaining ones get
-      // picked up on the next hourly run.
+      // Cap total work at ~45s before *starting* a new mailbox so the slowest
+      // legit per-mailbox sync (~10-12s) still has runway under Vercel's 60s
+      // function timeout. If we hit the start-of-iter budget we break out of
+      // the loop and log RECONCILE_DEADLINE_REACHED with the count of
+      // mailboxes we had to skip — the next hourly run picks them up.
       const start = Date.now();
-      const deadline = start + 50_000;
+      const startBudgetMs = 45_000;
+      const innerDeadline = start + 50_000;
 
       const mailboxes = await prisma.mailbox.findMany({
         where: { provider: 'GMAIL', isActive: true },
@@ -71,6 +74,7 @@ router.post(
       });
 
       let totalIngested = 0;
+      let deadlineReachedAt = -1;
       const results: Array<{
         mailboxId: string;
         emailAddress: string;
@@ -81,20 +85,14 @@ router.post(
         error?: string;
       }> = [];
 
-      for (const mb of mailboxes) {
-        if (Date.now() > deadline) {
-          results.push({
-            mailboxId: mb.id,
-            emailAddress: mb.emailAddress,
-            scannedFromGmail: 0,
-            missingBefore: 0,
-            ingested: 0,
-            skipped: true,
-          });
-          continue;
+      for (let i = 0; i < mailboxes.length; i++) {
+        const mb = mailboxes[i];
+        if (Date.now() - start > startBudgetMs) {
+          deadlineReachedAt = i;
+          break;
         }
         try {
-          const result = await reconcileMailbox(mb.id, { deadline });
+          const result = await reconcileMailbox(mb.id, { deadline: innerDeadline });
           totalIngested += result.ingested;
 
           await logEvent(
@@ -148,12 +146,38 @@ router.post(
         }
       }
 
+      if (deadlineReachedAt >= 0) {
+        const skipped = mailboxes.slice(deadlineReachedAt);
+        for (const mb of skipped) {
+          results.push({
+            mailboxId: mb.id,
+            emailAddress: mb.emailAddress,
+            scannedFromGmail: 0,
+            missingBefore: 0,
+            ingested: 0,
+            skipped: true,
+          });
+        }
+        await logEvent(
+          'RECONCILE_DEADLINE_REACHED',
+          {
+            elapsedMs: Date.now() - start,
+            skippedCount: skipped.length,
+            processedCount: deadlineReachedAt,
+            totalMailboxes: mailboxes.length,
+            skippedMailboxIds: skipped.map((m) => m.id),
+          },
+          'WARN'
+        );
+      }
+
       res.status(200).json({
         success: true,
         data: {
           mailboxCount: mailboxes.length,
           totalIngested,
           elapsedMs: Date.now() - start,
+          deadlineReached: deadlineReachedAt >= 0,
           results,
         },
       });

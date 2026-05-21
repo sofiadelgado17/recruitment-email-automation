@@ -20,6 +20,11 @@ const updateDraftSchema = z.object({
   subject: z.string().optional(),
 });
 
+const paginationSchema = z.object({
+  page: z.coerce.number().int().min(1).max(10000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
 const draftWithThreadInclude = {
   thread: {
     include: {
@@ -113,8 +118,14 @@ function pickOriginalMessage(
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const status = qs(req.query.status);
-    const page = parseInt(qs(req.query.page) ?? '1');
-    const limit = parseInt(qs(req.query.limit) ?? '50');
+    const paged = paginationSchema.safeParse({
+      page: qs(req.query.page),
+      limit: qs(req.query.limit),
+    });
+    if (!paged.success) {
+      return next(createError(paged.error.message, 400));
+    }
+    const { page, limit } = paged.data;
     const skip = (page - 1) * limit;
 
     const where: Record<string, unknown> = {};
@@ -471,6 +482,20 @@ router.post('/:id/discard', async (req: Request, res: Response, next: NextFuncti
 });
 
 // POST /api/drafts/:id/send
+//
+// Ordering matters here. The risky leg is the Gmail API call: if we marked the
+// DB row SENT *before* the send succeeded we could end up with a phantom-SENT
+// row (Gmail never delivered, but our UI claims it did). The reverse failure
+// — DB stays PENDING after Gmail successfully sent — is preferable because
+// the recruiter sees the inbound reply or finds the message in Gmail's Sent
+// folder and can manually reconcile. So:
+//
+//   1. Ensure a Gmail draft exists (create one if missing). If create fails,
+//      bail out cleanly — nothing was sent.
+//   2. Send via Gmail API. If this throws, DB stays PENDING/APPROVED and the
+//      error bubbles up to the caller.
+//   3. Only after Gmail confirms send do we mark the DB row SENT and the
+//      candidate REPLIED.
 router.post('/:id/send', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = String(req.params.id);
@@ -488,22 +513,38 @@ router.post('/:id/send', async (req: Request, res: Response, next: NextFunction)
     const mailbox = thread.mailbox;
     const candidate = thread.candidate;
 
-    if (draftWithThread.externalDraftId && mailbox.provider === 'GMAIL') {
-      await gmailSendDraft(mailbox.id, draftWithThread.externalDraftId);
-    } else if (mailbox.provider === 'GMAIL' && candidate) {
-      const externalDraftId = await createDraft(mailbox.id, {
-        threadId: thread.id,
-        externalThreadId: thread.externalThreadId,
-        subject: draftWithThread.subject,
-        bodyText: draftWithThread.bodyText,
-        bodyHtml: draftWithThread.bodyHtml ?? undefined,
-        inReplyToMessageId: draftWithThread.inReplyToMessageId ?? undefined,
-        referencesHeader: draftWithThread.referencesHeader ?? undefined,
-        toAddress: candidate.email,
-      });
+    if (mailbox.provider === 'GMAIL') {
+      let externalDraftId = draftWithThread.externalDraftId ?? null;
+
+      if (!externalDraftId) {
+        if (!candidate) {
+          return next(
+            createError('Cannot send: thread has no candidate to address', 400)
+          );
+        }
+        externalDraftId = await createDraft(mailbox.id, {
+          threadId: thread.id,
+          externalThreadId: thread.externalThreadId,
+          subject: draftWithThread.subject,
+          bodyText: draftWithThread.bodyText,
+          bodyHtml: draftWithThread.bodyHtml ?? undefined,
+          inReplyToMessageId: draftWithThread.inReplyToMessageId ?? undefined,
+          referencesHeader: draftWithThread.referencesHeader ?? undefined,
+          toAddress: candidate.email,
+        });
+        // Persist the externalDraftId immediately so a subsequent send-retry
+        // doesn't create a duplicate Gmail draft.
+        await prisma.emailDraft.update({
+          where: { id },
+          data: { externalDraftId },
+        });
+      }
+
       await gmailSendDraft(mailbox.id, externalDraftId);
     }
 
+    // Gmail send succeeded (or this is a non-Gmail mailbox) — safe to mark
+    // SENT and downstream candidate state.
     await prisma.emailDraft.update({
       where: { id },
       data: { status: 'SENT', sentAt: new Date() },

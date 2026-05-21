@@ -6,23 +6,31 @@ import { z } from 'zod';
 
 const router = Router();
 
+const CANDIDATE_STATUSES = [
+  'PENDING',
+  'INTERESTED',
+  'NOT_INTERESTED',
+  'NEUTRAL',
+  'REPLIED',
+  'NEEDS_REVIEW',
+  'IGNORED',
+] as const;
+
 const updateCandidateSchema = z.object({
   name: z.string().optional(),
   email: z.string().email().optional(),
   company: z.string().optional(),
   title: z.string().optional(),
-  status: z
-    .enum([
-      'PENDING',
-      'INTERESTED',
-      'NOT_INTERESTED',
-      'NEUTRAL',
-      'REPLIED',
-      'NEEDS_REVIEW',
-      'IGNORED',
-    ])
-    .optional(),
+  status: z.enum(CANDIDATE_STATUSES).optional(),
   notes: z.string().optional(),
+});
+
+// Pagination bounds — clamp `page` and `limit` so an attacker (or a buggy
+// caller) can't force the server to skip past unbounded offsets or pull
+// massive result sets per request.
+const paginationSchema = z.object({
+  page: z.coerce.number().int().min(1).max(10000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
 function qs(val: unknown): string | undefined {
@@ -47,8 +55,14 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const status = qs(req.query.status);
     const mailboxId = qs(req.query.mailboxId);
-    const page = parseInt(qs(req.query.page) ?? '1');
-    const limit = parseInt(qs(req.query.limit) ?? '50');
+    const paged = paginationSchema.safeParse({
+      page: qs(req.query.page),
+      limit: qs(req.query.limit),
+    });
+    if (!paged.success) {
+      return next(createError(paged.error.message, 400));
+    }
+    const { page, limit } = paged.data;
     const skip = (page - 1) * limit;
 
     const includeIgnored = qs(req.query.includeIgnored) === 'true';
