@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "smoke": "bash ../scripts/smoke-test.sh",
     "vercel-build": "prisma generate && prisma migrate deploy"
   },
   "dependencies": {
