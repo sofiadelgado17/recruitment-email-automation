@@ -397,9 +397,14 @@ async function regenerateDraftById(id: string): Promise<RegenerateOk | Regenerat
 
   if (isHandoffInbox && classificationResult.classification === 'INTERESTED') {
     const signatureHtml = await fetchMailboxSignature(mailbox.id);
-    const ccDisplayName = await prisma.mailbox
-      .findUnique({ where: { emailAddress: config.draftCcEmail.toLowerCase() }, select: { displayName: true } })
-      .then((mb) => (mb?.displayName ?? 'Sofia').split(/\s+/)[0]);
+    // Awaited form (not `.then(...)`) so this code path doesn't crash when
+    // findUnique is mocked/returns undefined — a real possibility when the
+    // CC mailbox isn't yet provisioned in the DB.
+    const ccMailbox = await prisma.mailbox.findUnique({
+      where: { emailAddress: config.draftCcEmail.toLowerCase() },
+      select: { displayName: true },
+    });
+    const ccDisplayName = (ccMailbox?.displayName ?? 'Sofia').split(/\s+/)[0];
     let content: { subject: string; bodyText: string; bodyHtml: string };
     try {
       const draftReply = await generateHandoffDraftReply(

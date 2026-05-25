@@ -181,7 +181,7 @@ describe('/api/mailboxes', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data).toMatchObject({ scanned: 12, ingested: 3, skipped: 9 });
-      expect(syncMessages).toHaveBeenCalledWith('mb-1', { maxResults: 250, daysBack: 7 });
+      expect(syncMessages).toHaveBeenCalledWith('mb-1', { maxResults: 250, daysBack: 30 });
     });
 
     it('returns 404 when the mailbox does not exist', async () => {

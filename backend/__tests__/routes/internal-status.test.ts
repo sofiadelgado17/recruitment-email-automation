@@ -67,11 +67,17 @@ describe('GET /api/internal/sync-health', () => {
       },
     ]);
 
-    // mb-1: per-mailbox awaits
+    // mb-1: per-mailbox awaits — order matches the Promise.all() in
+    // internal-status.ts: findFirst, count(24h), count(total messages),
+    // count(total candidates), count(pending drafts), count(needs-review).
     mockPrisma.emailMessage.findFirst.mockResolvedValueOnce({ receivedAt: lastMsgAt });
-    mockPrisma.emailMessage.count.mockResolvedValueOnce(7);
+    mockPrisma.emailMessage.count
+      .mockResolvedValueOnce(7) // messagesLast24h
+      .mockResolvedValueOnce(42); // totalMessages
+    mockPrisma.candidate.count
+      .mockResolvedValueOnce(5) // totalCandidates
+      .mockResolvedValueOnce(1); // candidatesNeedsReview
     mockPrisma.emailDraft.count.mockResolvedValueOnce(2);
-    mockPrisma.candidate.count.mockResolvedValueOnce(1);
     mockPrisma.systemLog.findMany.mockResolvedValueOnce([
       {
         id: 'log-1',
@@ -82,9 +88,13 @@ describe('GET /api/internal/sync-health', () => {
 
     // mb-2: per-mailbox awaits — quiet mailbox, no recent activity
     mockPrisma.emailMessage.findFirst.mockResolvedValueOnce(null);
-    mockPrisma.emailMessage.count.mockResolvedValueOnce(0);
+    mockPrisma.emailMessage.count
+      .mockResolvedValueOnce(0) // messagesLast24h
+      .mockResolvedValueOnce(0); // totalMessages
+    mockPrisma.candidate.count
+      .mockResolvedValueOnce(0) // totalCandidates
+      .mockResolvedValueOnce(0); // candidatesNeedsReview
     mockPrisma.emailDraft.count.mockResolvedValueOnce(0);
-    mockPrisma.candidate.count.mockResolvedValueOnce(0);
     mockPrisma.systemLog.findMany.mockResolvedValueOnce([]);
 
     const res = await request(app)
