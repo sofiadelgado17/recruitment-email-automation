@@ -8,6 +8,7 @@ import {
   serializeCredentials,
   syncMessages,
   fetchMailboxSignature,
+  reclassifyOrphanedThreads,
 } from '../services/gmail.service';
 import { storeOAuthState } from '../lib/oauthState';
 import { createError } from '../middleware/error';
@@ -66,6 +67,21 @@ router.post('/:id/resync', async (req: Request, res: Response, next: NextFunctio
     }
     const result = await syncMessages(id, { maxResults: 250, daysBack: 30 });
     await logEvent('MAILBOX_RESYNCED', { mailboxId: id, ...result }, 'INFO');
+    res.json({ success: true, data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/mailboxes/:id/reclassify
+// Re-classify threads that have stored messages but no linked candidate.
+// Works from DB data only — does not call Gmail API.
+router.post('/:id/reclassify', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = String(req.params.id);
+    const mailbox = await prisma.mailbox.findUnique({ where: { id } });
+    if (!mailbox) return next(createError('Mailbox not found', 404));
+    const result = await reclassifyOrphanedThreads(id);
     res.json({ success: true, data: result });
   } catch (err) {
     next(err);

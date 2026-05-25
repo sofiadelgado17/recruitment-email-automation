@@ -8,6 +8,7 @@ import {
   fetchMailboxSignatureHtml,
   approveDraft,
   resyncMailbox,
+  reclassifyMailbox,
   debugCandidate,
   fixRepliedAt,
   type Candidate,
@@ -336,6 +337,8 @@ function MailboxHealthAccordion({
 }) {
   const [open, setOpen] = useState(false);
   const [resyncing, setResyncing] = useState<string | null>(null);
+  const [reclassifying, setReclassifying] = useState<string | null>(null);
+  const [reclassifyResult, setReclassifyResult] = useState<{ mailboxId: string; threadsFound: number; threadsClassified: number } | null>(null);
   const [sigPreview, setSigPreview] = useState<{ mailboxId: string; html: string | null } | null>(null);
   const [loadingSig, setLoadingSig] = useState<string | null>(null);
   const [debugEmail, setDebugEmail] = useState('');
@@ -466,6 +469,33 @@ function MailboxHealthAccordion({
                             <RefreshCw className={cn('h-2.5 w-2.5', resyncing === row.mailboxId && 'animate-spin')} />
                             {resyncing === row.mailboxId ? 'Resyncing…' : 'Resync'}
                           </button>
+                          <button
+                            onClick={async () => {
+                              setReclassifying(row.mailboxId);
+                              setReclassifyResult(null);
+                              try {
+                                const res = await reclassifyMailbox(row.mailboxId);
+                                setReclassifyResult({ mailboxId: row.mailboxId, ...res.data });
+                              } catch {
+                                // ignore
+                              } finally {
+                                setReclassifying(null);
+                              }
+                            }}
+                            disabled={reclassifying === row.mailboxId}
+                            className="mt-0.5 flex items-center gap-1 text-[10px] text-fg-muted hover:text-fg-strong disabled:opacity-50"
+                            title="Re-classify threads that have messages but no linked candidate"
+                          >
+                            <RefreshCw className={cn('h-2.5 w-2.5', reclassifying === row.mailboxId && 'animate-spin')} />
+                            {reclassifying === row.mailboxId ? 'Classifying…' : 'Re-classify unlinked'}
+                          </button>
+                          {reclassifyResult?.mailboxId === row.mailboxId && (
+                            <span className="mt-0.5 text-[10px] text-fg-muted">
+                              {reclassifyResult.threadsFound === 0
+                                ? 'No orphaned threads found'
+                                : `${reclassifyResult.threadsClassified}/${reclassifyResult.threadsFound} threads classified`}
+                            </span>
+                          )}
                           <button
                             onClick={() => handlePreviewSig(row.mailboxId)}
                             disabled={loadingSig === row.mailboxId}

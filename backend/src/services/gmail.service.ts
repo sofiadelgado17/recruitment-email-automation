@@ -1864,3 +1864,79 @@ export async function processWebhook(data: { message: { data: string } }): Promi
     throw err;
   }
 }
+
+/**
+ * Re-classify threads in a mailbox that have stored messages but no linked
+ * candidate (i.e. fetchAndStoreMessage stored the message but classifyAndDraft
+ * returned early or failed).
+ *
+ * Works entirely from data already in the DB — does NOT call Gmail API — so it
+ * is safe to call even when the mailbox credentials are broken.
+ *
+ * Returns the count of threads that were successfully re-classified.
+ */
+export async function reclassifyOrphanedThreads(mailboxId: string): Promise<{ threadsFound: number; threadsClassified: number }> {
+  const mailbox = await prisma.mailbox.findUnique({ where: { id: mailboxId } });
+  if (!mailbox) return { threadsFound: 0, threadsClassified: 0 };
+
+  // Threads that have at least one stored message but no candidate attached.
+  const orphanedThreads = await prisma.emailThread.findMany({
+    where: {
+      mailboxId,
+      candidateId: null,
+      messages: { some: {} },
+    },
+    include: {
+      messages: { orderBy: { receivedAt: 'asc' } },
+    },
+  });
+
+  let classified = 0;
+  for (const thread of orphanedThreads) {
+    // Find the most recent inbound message (not sent by the mailbox owner).
+    const inbound = thread.messages
+      .filter((m) => m.fromAddress.toLowerCase() !== mailbox.emailAddress.toLowerCase())
+      .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
+
+    const latest = inbound[0];
+    if (!latest) continue; // outbound-only thread, skip
+
+    // Reconstruct a ParsedGmailMessage from stored DB fields.
+    let toAddresses: string[] = [];
+    let headers = { messageId: '', inReplyTo: '', references: '', cc: '' };
+    try {
+      toAddresses = JSON.parse(latest.toAddresses) as string[];
+    } catch { /* ignore */ }
+    try {
+      headers = JSON.parse(latest.headers) as typeof headers;
+    } catch { /* ignore */ }
+
+    const parsed: Parameters<typeof classifyAndDraft>[0]['parsed'] = {
+      externalMessageId: latest.externalMessageId,
+      threadId: thread.externalThreadId,
+      subject: latest.subject,
+      fromAddress: latest.fromAddress,
+      fromName: latest.fromName ?? undefined,
+      toAddresses,
+      bodyText: latest.bodyText ?? '',
+      bodyHtml: latest.bodyHtml ?? '',
+      receivedAt: latest.receivedAt,
+      headers,
+    };
+
+    try {
+      await classifyAndDraft({ mailbox, thread, parsed });
+      classified += 1;
+    } catch (err) {
+      console.error(`[reclassifyOrphanedThreads] Failed for thread ${thread.id}:`, err);
+    }
+  }
+
+  await logEvent(
+    'RECLASSIFY_ORPHANED_THREADS',
+    { mailboxId, threadsFound: orphanedThreads.length, threadsClassified: classified },
+    'INFO'
+  );
+
+  return { threadsFound: orphanedThreads.length, threadsClassified: classified };
+}

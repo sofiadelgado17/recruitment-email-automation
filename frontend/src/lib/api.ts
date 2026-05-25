@@ -234,6 +234,11 @@ export async function resyncMailbox(id: string): Promise<{ success: boolean; dat
   return res.data as { success: boolean; data: ResyncResult };
 }
 
+export async function reclassifyMailbox(id: string): Promise<{ success: boolean; data: { threadsFound: number; threadsClassified: number } }> {
+  const res = await api.post(`/mailboxes/${id}/reclassify`);
+  return res.data as { success: boolean; data: { threadsFound: number; threadsClassified: number } };
+}
+
 export async function fetchMailboxSignatureHtml(id: string): Promise<{ signatureHtml: string | null }> {
   const res = await api.get(`/mailboxes/${id}/signature`);
   return (res.data as { success: boolean; data: { signatureHtml: string | null } }).data;
