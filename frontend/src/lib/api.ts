@@ -330,6 +330,7 @@ export interface MailboxSyncHealth {
   pendingDrafts: number;
   candidatesNeedsReview: number;
   webhookErrorsLast24h: number;
+  lastWebhookError: string | null;
 }
 
 export async function fetchSyncHealth(): Promise<SingleResponse<MailboxSyncHealth[]>> {

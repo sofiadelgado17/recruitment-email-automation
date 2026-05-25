@@ -19,6 +19,7 @@ interface MailboxSyncHealth {
   pendingDrafts: number;
   candidatesNeedsReview: number;
   webhookErrorsLast24h: number;
+  lastWebhookError: string | null;
 }
 
 /**
@@ -56,6 +57,7 @@ router.get('/sync-health', async (_req: Request, res: Response, next: NextFuncti
       prisma.systemLog.findMany({
         where: { event: 'WEBHOOK_HANDLER_ERROR', createdAt: { gte: dayAgo } },
         select: { details: true },
+        orderBy: { createdAt: 'desc' },
         take: 500,
       }),
       // Fetched once here and shared across all mailboxes below — no need to
@@ -69,11 +71,16 @@ router.get('/sync-health', async (_req: Request, res: Response, next: NextFuncti
     ]);
 
     const errorsByEmail = new Map<string, number>();
+    const lastErrorByEmail = new Map<string, string>();
     for (const log of recentWebhookErrors) {
       const details = parseDetails(log.details);
       const email = typeof details.emailAddress === 'string' ? details.emailAddress : null;
       if (!email) continue;
       errorsByEmail.set(email, (errorsByEmail.get(email) ?? 0) + 1);
+      // recentWebhookErrors is ordered desc, so first occurrence = most recent
+      if (!lastErrorByEmail.has(email) && typeof details.error === 'string') {
+        lastErrorByEmail.set(email, details.error);
+      }
     }
 
     const health: MailboxSyncHealth[] = await Promise.all(
@@ -136,6 +143,7 @@ router.get('/sync-health', async (_req: Request, res: Response, next: NextFuncti
             pendingDrafts,
             candidatesNeedsReview,
             webhookErrorsLast24h: errorsByEmail.get(mb.emailAddress) ?? 0,
+            lastWebhookError: lastErrorByEmail.get(mb.emailAddress) ?? null,
           };
         } catch (mbErr) {
           // Return a degraded row rather than failing the whole response.
@@ -156,6 +164,7 @@ router.get('/sync-health', async (_req: Request, res: Response, next: NextFuncti
             pendingDrafts: 0,
             candidatesNeedsReview: 0,
             webhookErrorsLast24h: 0,
+            lastWebhookError: null,
           };
         }
       })
@@ -177,7 +186,8 @@ router.get('/debug/mailbox', async (req: Request, res: Response, next: NextFunct
     const mailbox = await prisma.mailbox.findUnique({ where: { emailAddress: email } });
     if (!mailbox) return res.status(404).json({ success: false, message: 'Mailbox not found' });
 
-    const [totalMessages, recentMessages, recentLogs, candidates] = await Promise.all([
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const [totalMessages, recentMessages, recentLogs, webhookErrorLogs, candidates] = await Promise.all([
       prisma.emailMessage.count({ where: { mailboxId: mailbox.id } }),
       prisma.emailMessage.findMany({
         where: { mailboxId: mailbox.id },
@@ -195,10 +205,21 @@ router.get('/debug/mailbox', async (req: Request, res: Response, next: NextFunct
       prisma.systemLog.findMany({
         where: {
           details: { contains: mailbox.id },
-          createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+          createdAt: { gte: weekAgo },
         },
         orderBy: { createdAt: 'desc' },
         take: 50,
+        select: { event: true, level: true, createdAt: true, details: true },
+      }),
+      // Webhook errors log emailAddress not mailboxId, so search separately
+      prisma.systemLog.findMany({
+        where: {
+          event: 'WEBHOOK_HANDLER_ERROR',
+          details: { contains: mailbox.emailAddress },
+          createdAt: { gte: weekAgo },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
         select: { event: true, level: true, createdAt: true, details: true },
       }),
       prisma.candidate.findMany({
@@ -212,11 +233,12 @@ router.get('/debug/mailbox', async (req: Request, res: Response, next: NextFunct
     res.json({
       success: true,
       data: {
-        mailbox: { id: mailbox.id, emailAddress: mailbox.emailAddress, isActive: mailbox.isActive, lastHistoryId: mailbox.lastHistoryId },
+        mailbox: { id: mailbox.id, emailAddress: mailbox.emailAddress, isActive: mailbox.isActive, lastHistoryId: mailbox.lastHistoryId, watchExpiry: mailbox.watchExpiry },
         totalMessages,
         recentMessages,
         candidates,
         recentLogs,
+        webhookErrorLogs,
       },
     });
   } catch (err) {

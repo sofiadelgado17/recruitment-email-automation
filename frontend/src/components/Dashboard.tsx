@@ -520,8 +520,13 @@ function MailboxHealthAccordion({
                         <td className={cn('px-4 py-2.5 font-mono tabular-nums', driftTone)}>
                           {row.lastReconciliationFoundMissing}
                         </td>
-                        <td className={cn('px-4 py-2.5 font-mono tabular-nums', webhookErrTone)}>
-                          {row.webhookErrorsLast24h}
+                        <td className={cn('px-4 py-2.5', webhookErrTone)}>
+                          <span className="font-mono tabular-nums">{row.webhookErrorsLast24h}</span>
+                          {row.lastWebhookError && (
+                            <span className="ml-2 text-[11px] opacity-75 truncate max-w-[200px] inline-block align-middle" title={row.lastWebhookError}>
+                              — {row.lastWebhookError.slice(0, 60)}{row.lastWebhookError.length > 60 ? '…' : ''}
+                            </span>
+                          )}
                         </td>
                       </tr>
                     );
