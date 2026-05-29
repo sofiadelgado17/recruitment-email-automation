@@ -805,7 +805,8 @@ async function classifyAndDraft(opts: {
 async function fetchAndStoreMessage(
   gmail: ReturnType<typeof google.gmail>,
   mailbox: Mailbox,
-  externalMessageId: string
+  externalMessageId: string,
+  opts: { skipClassification?: boolean; classifyCutoff?: Date } = {}
 ): Promise<boolean> {
   // Skip if already stored
   const existing = await prisma.emailMessage.findUnique({
@@ -895,8 +896,12 @@ async function fetchAndStoreMessage(
       return true;
     }
 
-    // Inbound: classify + maybe draft
-    await classifyAndDraft({ mailbox, thread, parsed });
+    // Inbound: classify + maybe draft.
+    // Skip for old messages during bulk resync (they're stored for context only).
+    const tooOld = opts.classifyCutoff && parsed.receivedAt < opts.classifyCutoff;
+    if (!opts.skipClassification && !tooOld) {
+      await classifyAndDraft({ mailbox, thread, parsed });
+    }
     return true;
   } catch (err) {
     console.error(`[Gmail] Failed to process message ${externalMessageId}:`, err);
@@ -928,37 +933,72 @@ async function fetchAndStoreMessage(
  * After completion, stores the current historyId so future webhooks can run
  * incrementally.
  *
- * `maxResults` is capped at 250 to stay within Vercel's serverless timeout
- * during connect-time backfills.
+ * Messages are fetched in parallel (8 concurrent) with Gmail API pagination.
+ * Claude classification/drafting only runs for messages newer than classifyDaysBack
+ * (default 7 days) — older messages are stored for thread context but not acted on.
  */
+// Run an async function over an array with at most `concurrency` tasks in-flight.
+async function pMap<T, R>(
+  items: T[],
+  fn: (item: T) => Promise<R>,
+  concurrency: number
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let i = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      results[idx] = await fn(items[idx]!);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
+}
+
 export async function syncMessages(
   mailboxId: string,
-  opts: { maxResults?: number; daysBack?: number } = {}
+  opts: { maxResults?: number; daysBack?: number; classifyDaysBack?: number } = {}
 ): Promise<{ messagesSeen: number; messagesStored: number }> {
-  const maxResults = Math.min(opts.maxResults ?? 100, 250);
+  const maxResults = opts.maxResults ?? 500;
   const daysBack = opts.daysBack ?? 7;
+  // Only run Claude classification/drafting for messages within this recent
+  // window. Older messages are stored for thread context but not acted on,
+  // keeping bulk resyncs fast.
+  const classifyDaysBack = opts.classifyDaysBack ?? 7;
+  const classifyCutoff = new Date(Date.now() - classifyDaysBack * 24 * 60 * 60 * 1000);
 
   const mailbox = await prisma.mailbox.findUnique({ where: { id: mailboxId } });
   if (!mailbox || !mailbox.isActive) return { messagesSeen: 0, messagesStored: 0 };
 
   const gmail = await getGmailClient(mailbox);
 
-  // Get messages from the last N days
+  // Paginate through all messages in the window.
   const after = Math.floor((Date.now() - daysBack * 24 * 60 * 60 * 1000) / 1000);
-  const listRes = await gmail.users.messages.list({
-    userId: 'me',
-    q: `after:${after}`,
-    maxResults,
-  });
+  const allMessageIds: string[] = [];
+  let pageToken: string | undefined;
+  do {
+    const listRes = await gmail.users.messages.list({
+      userId: 'me',
+      q: `after:${after}`,
+      maxResults: 500,
+      pageToken,
+    });
+    for (const msg of listRes.data.messages ?? []) {
+      if (msg.id) allMessageIds.push(msg.id);
+    }
+    pageToken = listRes.data.nextPageToken ?? undefined;
+  } while (pageToken && allMessageIds.length < maxResults);
 
-  const messages = listRes.data.messages ?? [];
+  // Fetch + store messages in parallel (8 concurrent). Messages older than
+  // classifyCutoff skip the Claude classify+draft step — just stored for context.
   let stored = 0;
-
-  for (const msg of messages) {
-    if (!msg.id) continue;
-    const didStore = await fetchAndStoreMessage(gmail, mailbox, msg.id);
-    if (didStore) stored += 1;
-  }
+  const storedResults = await pMap(
+    allMessageIds,
+    (msgId) =>
+      fetchAndStoreMessage(gmail, mailbox, msgId, { classifyCutoff }),
+    8
+  );
+  for (const r of storedResults) if (r) stored++;
 
   // After a full sync, capture the current historyId so subsequent webhooks
   // run incrementally.
@@ -976,11 +1016,11 @@ export async function syncMessages(
 
   await logEvent(
     'MAILBOX_SYNCED',
-    { mailboxId, messagesSeen: messages.length, messagesStored: stored },
+    { mailboxId, messagesSeen: allMessageIds.length, messagesStored: stored },
     'INFO'
   );
 
-  return { messagesSeen: messages.length, messagesStored: stored };
+  return { messagesSeen: allMessageIds.length, messagesStored: stored };
 }
 
 /**
