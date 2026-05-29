@@ -65,13 +65,22 @@ router.post('/:id/resync', async (req: Request, res: Response, next: NextFunctio
     if (!mailbox) {
       return next(createError('Mailbox not found', 404));
     }
-    // Store and classify all messages from the last 30 days. The batch dedup
-    // check means we only call Gmail API for genuinely new messages, so
-    // classifying the full window is fast even with a large daysBack.
     const result = await syncMessages(id, { daysBack: 30, classifyDaysBack: 30 });
     await logEvent('MAILBOX_RESYNCED', { mailboxId: id, ...result }, 'INFO');
     res.json({ success: true, data: result });
   } catch (err) {
+    // Surface OAuth/auth failures with a specific message so the UI can prompt
+    // the user to reconnect rather than showing a generic "500" error.
+    const status =
+      (err as { code?: number; status?: number; response?: { status?: number } })?.code ??
+      (err as { status?: number })?.status ??
+      (err as { response?: { status?: number } })?.response?.status;
+    if (status === 401 || status === 403) {
+      return next(createError(
+        `Gmail auth failed for this mailbox — OAuth credentials may be expired. Please reconnect the mailbox.`,
+        401
+      ));
+    }
     next(err);
   }
 });

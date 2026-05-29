@@ -811,14 +811,22 @@ function ResyncAllButton({ mailboxes }: { mailboxes: Mailbox[] }) {
       </button>
       {results && (
         <div className="flex flex-col gap-0.5 text-right">
-          {results.map((r) => (
-            <p key={r.email} className={`text-[11px] ${r.ok ? 'text-emerald-600' : 'text-rose-600'}`}>
-              {r.email.split('@')[0]}:{' '}
-              {r.ok
-                ? `✓ ${r.data?.messagesStored ?? 0} stored / ${r.data?.messagesSeen ?? 0} seen`
-                : `✗ ${r.error ?? 'failed'}`}
-            </p>
-          ))}
+          {results.map((r) => {
+            const isAuthError = !r.ok && (r.error?.toLowerCase().includes('auth') || r.error?.toLowerCase().includes('oauth') || r.error?.toLowerCase().includes('credentials'));
+            return (
+              <div key={r.email} className="flex flex-col gap-0">
+                <p className={`text-[11px] ${r.ok ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  {r.email.split('@')[0]}:{' '}
+                  {r.ok
+                    ? `✓ ${r.data?.messagesStored ?? 0} stored / ${r.data?.messagesSeen ?? 0} seen`
+                    : `✗ ${r.error ?? 'failed'}`}
+                </p>
+                {isAuthError && (
+                  <p className="text-[11px] text-amber-500">↳ Mailbox needs to be reconnected</p>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
