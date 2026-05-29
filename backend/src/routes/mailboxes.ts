@@ -65,9 +65,10 @@ router.post('/:id/resync', async (req: Request, res: Response, next: NextFunctio
     if (!mailbox) {
       return next(createError('Mailbox not found', 404));
     }
-    // Store 30 days of messages but only classify/draft the most recent 7 days.
-    // This keeps bulk resyncs fast while ensuring recent replies get actioned.
-    const result = await syncMessages(id, { daysBack: 30, classifyDaysBack: 7 });
+    // Store and classify all messages from the last 30 days. The batch dedup
+    // check means we only call Gmail API for genuinely new messages, so
+    // classifying the full window is fast even with a large daysBack.
+    const result = await syncMessages(id, { daysBack: 30, classifyDaysBack: 30 });
     await logEvent('MAILBOX_RESYNCED', { mailboxId: id, ...result }, 'INFO');
     res.json({ success: true, data: result });
   } catch (err) {

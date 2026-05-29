@@ -1914,50 +1914,68 @@ export async function processWebhook(data: { message: { data: string } }): Promi
 }
 
 /**
- * Re-classify threads in a mailbox that have stored messages but no linked
- * candidate (i.e. fetchAndStoreMessage stored the message but classifyAndDraft
- * returned early or failed).
+ * Re-classify threads in a mailbox that need action but were never processed —
+ * either because classifyAndDraft failed/was skipped, or because a candidate
+ * replied after a webhook error.
  *
- * Works entirely from data already in the DB — does NOT call Gmail API — so it
- * is safe to call even when the mailbox credentials are broken.
+ * Covers two cases:
+ *   1. Threads with no candidateId at all (fully orphaned)
+ *   2. Threads that have a candidateId but no PENDING/APPROVED draft, and have
+ *      a recent inbound reply that was never acted on
  *
- * Returns the count of threads that were successfully re-classified.
+ * Works entirely from data already in the DB — no Gmail API calls.
  */
 export async function reclassifyOrphanedThreads(mailboxId: string): Promise<{ threadsFound: number; threadsClassified: number }> {
   const mailbox = await prisma.mailbox.findUnique({ where: { id: mailboxId } });
   if (!mailbox) return { threadsFound: 0, threadsClassified: 0 };
 
-  // Threads that have at least one stored message but no candidate attached.
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+  // Case 1: threads with no candidateId at all.
   const orphanedThreads = await prisma.emailThread.findMany({
     where: {
       mailboxId,
       candidateId: null,
       messages: { some: {} },
     },
-    include: {
-      messages: { orderBy: { receivedAt: 'asc' } },
-    },
+    include: { messages: { orderBy: { receivedAt: 'asc' } } },
   });
 
+  // Case 2: threads with a candidate but no pending/approved draft, where an
+  // inbound reply arrived in the last 30 days (i.e. needs a response).
+  const threadsNeedingDraft = await prisma.emailThread.findMany({
+    where: {
+      mailboxId,
+      candidateId: { not: null },
+      drafts: { none: { status: { in: ['PENDING', 'APPROVED'] } } },
+      messages: {
+        some: {
+          fromAddress: { not: mailbox.emailAddress },
+          receivedAt: { gte: thirtyDaysAgo },
+        },
+      },
+    },
+    include: { messages: { orderBy: { receivedAt: 'asc' } } },
+  });
+
+  const allThreads = [
+    ...orphanedThreads,
+    ...threadsNeedingDraft.filter((t) => !orphanedThreads.some((o) => o.id === t.id)),
+  ];
+
   let classified = 0;
-  for (const thread of orphanedThreads) {
-    // Find the most recent inbound message (not sent by the mailbox owner).
+  for (const thread of allThreads) {
     const inbound = thread.messages
       .filter((m) => m.fromAddress.toLowerCase() !== mailbox.emailAddress.toLowerCase())
       .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
 
     const latest = inbound[0];
-    if (!latest) continue; // outbound-only thread, skip
+    if (!latest) continue;
 
-    // Reconstruct a ParsedGmailMessage from stored DB fields.
     let toAddresses: string[] = [];
     let headers = { messageId: '', inReplyTo: '', references: '', cc: '' };
-    try {
-      toAddresses = JSON.parse(latest.toAddresses) as string[];
-    } catch { /* ignore */ }
-    try {
-      headers = JSON.parse(latest.headers) as typeof headers;
-    } catch { /* ignore */ }
+    try { toAddresses = JSON.parse(latest.toAddresses) as string[]; } catch { /* ignore */ }
+    try { headers = JSON.parse(latest.headers) as typeof headers; } catch { /* ignore */ }
 
     const parsed: Parameters<typeof classifyAndDraft>[0]['parsed'] = {
       externalMessageId: latest.externalMessageId,
@@ -1982,9 +2000,9 @@ export async function reclassifyOrphanedThreads(mailboxId: string): Promise<{ th
 
   await logEvent(
     'RECLASSIFY_ORPHANED_THREADS',
-    { mailboxId, threadsFound: orphanedThreads.length, threadsClassified: classified },
+    { mailboxId, threadsFound: allThreads.length, threadsClassified: classified },
     'INFO'
   );
 
-  return { threadsFound: orphanedThreads.length, threadsClassified: classified };
+  return { threadsFound: allThreads.length, threadsClassified: classified };
 }
