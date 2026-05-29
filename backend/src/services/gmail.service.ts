@@ -972,7 +972,7 @@ export async function syncMessages(
 
   const gmail = await getGmailClient(mailbox);
 
-  // Paginate through all messages in the window.
+  // Paginate through all message IDs in the window (one fast list call per page).
   const after = Math.floor((Date.now() - daysBack * 24 * 60 * 60 * 1000) / 1000);
   const allMessageIds: string[] = [];
   let pageToken: string | undefined;
@@ -989,14 +989,22 @@ export async function syncMessages(
     pageToken = listRes.data.nextPageToken ?? undefined;
   } while (pageToken && allMessageIds.length < maxResults);
 
-  // Fetch + store messages in parallel (8 concurrent). Messages older than
-  // classifyCutoff skip the Claude classify+draft step — just stored for context.
+  // Single batch query to find which IDs are already stored — avoids one
+  // DB round-trip per message (previously 500 individual queries).
+  const alreadyStored = await prisma.emailMessage.findMany({
+    where: { externalMessageId: { in: allMessageIds } },
+    select: { externalMessageId: true },
+  });
+  const storedSet = new Set(alreadyStored.map((m) => m.externalMessageId));
+  const newMessageIds = allMessageIds.filter((id) => !storedSet.has(id));
+
+  // Fetch + store only NEW messages in parallel (8 concurrent).
+  // Messages older than classifyCutoff skip the Claude classify+draft step.
   let stored = 0;
   const storedResults = await pMap(
-    allMessageIds,
-    (msgId) =>
-      fetchAndStoreMessage(gmail, mailbox, msgId, { classifyCutoff }),
-    8
+    newMessageIds,
+    (msgId) => fetchAndStoreMessage(gmail, mailbox, msgId, { classifyCutoff }),
+    12
   );
   for (const r of storedResults) if (r) stored++;
 
@@ -1016,7 +1024,7 @@ export async function syncMessages(
 
   await logEvent(
     'MAILBOX_SYNCED',
-    { mailboxId, messagesSeen: allMessageIds.length, messagesStored: stored },
+    { mailboxId, messagesSeen: allMessageIds.length, newMessages: newMessageIds.length, messagesStored: stored },
     'INFO'
   );
 
