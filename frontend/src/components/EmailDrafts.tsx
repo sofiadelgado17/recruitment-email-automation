@@ -257,7 +257,7 @@ function ShortcutsDialog({
   );
 }
 
-export default function EmailDrafts({ mailboxId: _mailboxId }: Props) {
+export default function EmailDrafts({ mailboxId }: Props) {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeStatus, setActiveStatus] = useState<DraftStatus>('PENDING');
@@ -270,8 +270,8 @@ export default function EmailDrafts({ mailboxId: _mailboxId }: Props) {
   const deepLinkDraftId = searchParams.get('draftId');
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['drafts', activeStatus],
-    queryFn: () => fetchDrafts({ status: activeStatus, limit: 100 }),
+    queryKey: ['drafts', activeStatus, mailboxId],
+    queryFn: () => fetchDrafts({ status: activeStatus, limit: 100, mailboxId }),
     staleTime: 15_000,
   });
 
