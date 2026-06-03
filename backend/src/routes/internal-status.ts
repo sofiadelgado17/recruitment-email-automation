@@ -297,8 +297,14 @@ router.get('/debug/candidate', async (req: Request, res: Response, next: NextFun
 });
 
 // POST /api/internal/fix-replied-at
-// One-time fix: clears repliedAt on candidates where the only outbound messages
-// in their thread are the original outreach (no prior inbound from candidate).
+// Clears repliedAt on candidates where no outbound message in their threads
+// is a genuine reply to the candidate.
+//
+// An outbound is a "genuine reply" if its stored headers.inReplyTo is non-empty.
+// Original outreach emails have no inReplyTo; replies always do. Using inReplyTo
+// rather than receivedAt ordering avoids false-positives from the now-fixed bug
+// where missing Date: headers defaulted to new Date() (causing repliedAt to be
+// set on messages whose receivedAt was incorrectly stored as "now").
 router.post('/fix-replied-at', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const candidates = await prisma.candidate.findMany({
@@ -314,34 +320,44 @@ router.post('/fix-replied-at', async (_req: Request, res: Response, next: NextFu
 
     let cleared = 0;
     for (const candidate of candidates) {
+      let hasGenuineReply = false;
+
       for (const thread of candidate.threads) {
         const mailbox = await prisma.mailbox.findUnique({ where: { id: thread.mailboxId } });
         if (!mailbox) continue;
         const mailboxEmail = mailbox.emailAddress.toLowerCase();
 
-        // Find earliest outbound message in the thread
+        const hasInbound = thread.messages.some(
+          (m) => m.fromAddress.toLowerCase() !== mailboxEmail
+        );
+        if (!hasInbound) continue;
+
+        // A genuine reply has inReplyTo set in its headers. Original outreach
+        // emails sent to candidates don't have inReplyTo.
         const outboundMsgs = thread.messages.filter(
           (m) => m.fromAddress.toLowerCase() === mailboxEmail
         );
-        if (outboundMsgs.length === 0) continue;
-        const earliestOutbound = outboundMsgs[0];
+        const genuineReply = outboundMsgs.some((m) => {
+          try {
+            const h = JSON.parse(typeof m.headers === 'string' ? m.headers : JSON.stringify(m.headers ?? {})) as { inReplyTo?: string };
+            return h.inReplyTo && h.inReplyTo.trim().length > 0;
+          } catch {
+            return false;
+          }
+        });
 
-        // Check if any inbound message exists before the earliest outbound
-        const hasInboundBefore = thread.messages.some(
-          (m) =>
-            m.fromAddress.toLowerCase() !== mailboxEmail &&
-            m.receivedAt < earliestOutbound.receivedAt
-        );
-
-        if (!hasInboundBefore) {
-          // All outbound messages are original outreach — clear repliedAt
-          await prisma.candidate.update({
-            where: { id: candidate.id },
-            data: { repliedAt: null },
-          });
-          cleared++;
-          break; // only need to process each candidate once
+        if (genuineReply) {
+          hasGenuineReply = true;
+          break;
         }
+      }
+
+      if (!hasGenuineReply) {
+        await prisma.candidate.update({
+          where: { id: candidate.id },
+          data: { repliedAt: null },
+        });
+        cleared++;
       }
     }
 

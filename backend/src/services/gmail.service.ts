@@ -264,6 +264,7 @@ function parseGmailMessage(
   msgId: string,
   fullMsgData: {
     threadId?: string | null;
+    internalDate?: string | null;
     payload?: {
       headers?: Array<{ name?: string | null; value?: string | null }> | null;
       mimeType?: string | null;
@@ -325,7 +326,22 @@ function parseGmailMessage(
     toAddresses,
     bodyText,
     bodyHtml,
-    receivedAt: dateStr ? new Date(dateStr) : new Date(),
+    // Prefer Gmail's authoritative internalDate (epoch ms, always present) over
+    // the Date: header which can be spoofed, missing, or malformed. A bad Date:
+    // header would default to new Date() (now), causing priorInbound checks to
+    // incorrectly find all past messages as "before" an outbound, setting
+    // repliedAt when no reply was sent.
+    receivedAt: (() => {
+      if (fullMsgData.internalDate) {
+        const ms = parseInt(fullMsgData.internalDate, 10);
+        if (!isNaN(ms)) return new Date(ms);
+      }
+      if (dateStr) {
+        const d = new Date(dateStr);
+        if (!isNaN(d.getTime())) return d;
+      }
+      return new Date();
+    })(),
     headers: { messageId, inReplyTo, references, cc: ccRaw },
   };
 }
