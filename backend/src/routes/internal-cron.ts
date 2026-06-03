@@ -24,8 +24,9 @@ function isAuthorized(req: Request): boolean {
   return false;
 }
 
-// POST /api/internal/cron/renew-watches
-router.post(
+// GET /api/internal/cron/renew-watches
+// NOTE: Vercel cron jobs invoke via GET — must not be POST.
+router.get(
   '/renew-watches',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -41,7 +42,8 @@ router.post(
   }
 );
 
-// POST /api/internal/cron/reconcile
+// GET /api/internal/cron/reconcile
+// NOTE: Vercel cron jobs invoke via GET — must not be POST.
 // Hourly safety-net sync. For each active mailbox, lists Gmail messages
 // received in the last ~24h and ingests anything our DB is missing via the
 // same fetchAndStoreMessage path the webhook uses (so Phase F/H classification,
@@ -50,7 +52,7 @@ router.post(
 // Primary push (Pub/Sub -> webhook -> syncIncremental) is highly reliable but
 // not invincible: cold-start timeouts, watch expiry windows, Gmail history
 // horizon (~30d), transient errors. Hourly reconciliation closes the gap.
-router.post(
+router.get(
   '/reconcile',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -66,7 +68,10 @@ router.post(
       // mailboxes we had to skip — the next hourly run picks them up.
       const start = Date.now();
       const startBudgetMs = 45_000;
-      const innerDeadline = start + 50_000;
+      // innerDeadline is computed fresh per-mailbox below so later mailboxes
+      // get the same per-mailbox budget (12s) regardless of how long earlier
+      // ones took. A shared start+50s deadline would starve later mailboxes.
+      const perMailboxBudgetMs = 12_000;
 
       const mailboxes = await prisma.mailbox.findMany({
         where: { provider: 'GMAIL', isActive: true },
@@ -94,6 +99,7 @@ router.post(
           break;
         }
         try {
+          const innerDeadline = Date.now() + perMailboxBudgetMs;
           const result = await reconcileMailbox(mb.id, { deadline: innerDeadline });
           totalIngested += result.ingested;
           totalMissing += result.missingBefore;
