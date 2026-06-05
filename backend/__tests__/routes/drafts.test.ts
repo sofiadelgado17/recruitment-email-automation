@@ -149,6 +149,52 @@ describe('/api/drafts', () => {
         fromAddress: 'a@example.com',
       });
     });
+
+    it('orders the PENDING queue by the thread lastMessageAt ascending (longest-waiting first)', async () => {
+      mockPrisma.emailDraft.findMany.mockResolvedValueOnce([]);
+      mockPrisma.emailDraft.count.mockResolvedValueOnce(0);
+
+      const res = await request(app)
+        .get('/api/drafts?status=PENDING')
+        .set('Authorization', AUTH);
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.emailDraft.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: { thread: { lastMessageAt: 'asc' } },
+        })
+      );
+    });
+
+    it('keeps the APPROVED list ordered by createdAt descending', async () => {
+      mockPrisma.emailDraft.findMany.mockResolvedValueOnce([]);
+      mockPrisma.emailDraft.count.mockResolvedValueOnce(0);
+
+      const res = await request(app)
+        .get('/api/drafts?status=APPROVED')
+        .set('Authorization', AUTH);
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.emailDraft.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: { createdAt: 'desc' },
+        })
+      );
+    });
+
+    it('keeps the unfiltered list ordered by createdAt descending', async () => {
+      mockPrisma.emailDraft.findMany.mockResolvedValueOnce([]);
+      mockPrisma.emailDraft.count.mockResolvedValueOnce(0);
+
+      const res = await request(app).get('/api/drafts').set('Authorization', AUTH);
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.emailDraft.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: { createdAt: 'desc' },
+        })
+      );
+    });
   });
 
   describe('POST /api/drafts/:id/approve', () => {
