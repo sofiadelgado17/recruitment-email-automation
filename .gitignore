@@ -25,8 +25,12 @@ Thumbs.db
 # Test coverage
 coverage/
 
+# Vercel
+.vercel/
+
 # Vite
 frontend/dist/
 
 # TypeScript build info
 *.tsbuildinfo
+.vercel

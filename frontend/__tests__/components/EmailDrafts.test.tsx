@@ -335,4 +335,93 @@ describe('<EmailDrafts />', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
   });
+
+  // --- Overdue ("2+ days waiting") flag -----------------------------------
+
+  describe('overdue flag', () => {
+    const NOW = new Date('2026-05-22T12:00:00.000Z');
+
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.setSystemTime(NOW);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('flags a draft whose inbound message has waited 2+ days and not a fresh one', async () => {
+      const overdue = makeDraft({
+        id: 'draft-overdue',
+        originalMessage: {
+          id: 'msg-overdue',
+          fromAddress: 'old@example.com',
+          fromName: 'Grace Hopper',
+          subject: 'Re: old thread',
+          bodyText: 'still waiting',
+          bodyHtml: null,
+          // ~3 days before NOW → overdue.
+          receivedAt: '2026-05-19T12:00:00.000Z',
+        },
+        thread: {
+          id: 'thread-overdue',
+          mailboxId: 'mb-1',
+          externalThreadId: 'ext-overdue',
+          subject: 'Re: old thread',
+          lastMessageAt: '2026-05-19T12:00:00.000Z',
+          createdAt: '2026-05-19T12:00:00.000Z',
+          candidate: {
+            id: 'cand-overdue',
+            name: 'Grace Hopper',
+            email: 'old@example.com',
+            status: 'INTERESTED',
+          },
+        },
+      });
+      const fresh = makeDraft({
+        id: 'draft-fresh',
+        originalMessage: {
+          id: 'msg-fresh',
+          fromAddress: 'new@example.com',
+          fromName: 'Alan Turing',
+          subject: 'Re: new thread',
+          bodyText: 'just replied',
+          bodyHtml: null,
+          // ~2 hours before NOW → fresh.
+          receivedAt: '2026-05-22T10:00:00.000Z',
+        },
+        thread: {
+          id: 'thread-fresh',
+          mailboxId: 'mb-1',
+          externalThreadId: 'ext-fresh',
+          subject: 'Re: new thread',
+          lastMessageAt: '2026-05-22T10:00:00.000Z',
+          createdAt: '2026-05-22T10:00:00.000Z',
+          candidate: {
+            id: 'cand-fresh',
+            name: 'Alan Turing',
+            email: 'new@example.com',
+            status: 'INTERESTED',
+          },
+        },
+      });
+
+      fetchDraftsMock.mockResolvedValue({
+        success: true,
+        data: [overdue, fresh],
+        meta: { total: 2, page: 1, limit: 100 },
+      });
+
+      renderDrafts();
+      await screen.findByText('Grace Hopper');
+
+      const overdueRow = screen.getByText('Grace Hopper').closest('button');
+      expect(overdueRow).not.toBeNull();
+      expect(within(overdueRow!).getByTestId('overdue-flag')).toBeInTheDocument();
+
+      const freshRow = screen.getByText('Alan Turing').closest('button');
+      expect(freshRow).not.toBeNull();
+      expect(within(freshRow!).queryByTestId('overdue-flag')).toBeNull();
+    });
+  });
 });

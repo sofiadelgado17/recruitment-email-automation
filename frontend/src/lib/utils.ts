@@ -15,6 +15,22 @@ export function formatTimeAgo(date: Date | string): string {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+// Calendar hours a candidate has been waiting; anything past this threshold is
+// surfaced as "overdue" on the Pending drafts queue.
+export const OVERDUE_THRESHOLD_HOURS = 48;
+
+export function hoursSince(date: Date | string): number {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return (Date.now() - d.getTime()) / (1000 * 60 * 60);
+}
+
+export function isOverdue(
+  date: Date | string,
+  thresholdHours = OVERDUE_THRESHOLD_HOURS
+): boolean {
+  return hoursSince(date) > thresholdHours;
+}
+
 export function formatDate(date: Date | string): string {
   const d = typeof date === 'string' ? new Date(date) : date;
   return d.toLocaleDateString('en-US', {

@@ -22,7 +22,7 @@ import {
   regenerateDraft,
   type EmailDraft,
 } from '../lib/api';
-import { cn, formatTimeAgo } from '../lib/utils';
+import { cn, formatTimeAgo, formatDate, isOverdue } from '../lib/utils';
 import {
   toastSuccess,
   toastError,
@@ -38,6 +38,7 @@ import {
   Sparkles,
   Keyboard,
   ChevronRight,
+  TriangleAlert,
 } from 'lucide-react';
 import DraftReviewPane from './DraftReviewPane';
 import { useDraftKeyboardShortcuts } from '../hooks/useDraftKeyboardShortcuts';
@@ -79,6 +80,10 @@ function DraftListRow({
   const name = candidate?.name ?? 'Unknown candidate';
   const role = candidate?.role;
   const preview = firstNonEmptyLine(draft.bodyText) || draft.subject;
+  // The candidate has been waiting since their most recent unanswered inbound
+  // message; fall back to the draft's creation time if it isn't resolved.
+  const waitingSince = draft.originalMessage?.receivedAt ?? draft.createdAt;
+  const overdue = isOverdue(waitingSince);
   const rowRef = useRef<HTMLButtonElement | null>(null);
 
   // Keep the focused row visible without grabbing input focus
@@ -129,6 +134,18 @@ function DraftListRow({
             {formatTimeAgo(draft.createdAt)}
           </span>
         </div>
+        {overdue ? (
+          <div className="mt-1">
+            <span
+              data-testid="overdue-flag"
+              title={`Waiting since ${formatDate(waitingSince)}`}
+              className="inline-flex items-center gap-1 rounded-md bg-rose-500/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-rose-700 ring-1 ring-inset ring-rose-500/20 dark:text-rose-300"
+            >
+              <TriangleAlert className="h-3 w-3" />
+              {formatTimeAgo(waitingSince)} waiting
+            </span>
+          </div>
+        ) : null}
         {role ? (
           <div className="mt-0.5">
             <span

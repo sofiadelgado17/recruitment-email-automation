@@ -161,6 +161,14 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       };
     }
 
+    // Pending drafts surface the candidates who have been waiting longest:
+    // order by the thread's most recent (unanswered inbound) message, oldest
+    // first. Every other view keeps the newest-first ordering.
+    const orderBy: Prisma.EmailDraftOrderByWithRelationInput =
+      status === 'PENDING'
+        ? { thread: { lastMessageAt: 'asc' } }
+        : { createdAt: 'desc' };
+
     const [drafts, total] = await Promise.all([
       prisma.emailDraft.findMany({
         where,
@@ -189,7 +197,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
             },
           },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         skip,
         take: limit,
       }),

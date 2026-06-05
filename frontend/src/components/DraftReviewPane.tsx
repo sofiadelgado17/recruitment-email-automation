@@ -10,7 +10,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from './ui/alert-dialog';
-import { cn, formatTimeAgo } from '../lib/utils';
+import { cn, formatTimeAgo, isOverdue } from '../lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { ClassificationBadge, StatusBadge, type StatusVariant } from './ui/StatusBadge';
 import { Button } from './ui/button';
@@ -22,6 +22,7 @@ import {
   Pencil,
   Mail,
   ChevronLeft,
+  TriangleAlert,
 } from 'lucide-react';
 import type { EmailDraft, OriginalMessage } from '../lib/api';
 import { toastError } from '../lib/toast';
@@ -255,6 +256,9 @@ export default function DraftReviewPane({
   const candidate = draft?.thread?.candidate;
   const isPending = draft?.status === 'PENDING';
   const isApproved = draft?.status === 'APPROVED';
+  // Light "waiting 2+ days" cue mirroring the list-row flag.
+  const waitingSince = draft?.originalMessage?.receivedAt ?? draft?.createdAt;
+  const overdue = waitingSince ? isOverdue(waitingSince) : false;
 
   const handleSaveEdit = () => {
     if (!draft) return;
@@ -305,6 +309,16 @@ export default function DraftReviewPane({
               {draft && (
                 <span className="font-mono text-[11px] tabular-nums text-fg-subtle">
                   {formatTimeAgo(draft.createdAt)}
+                </span>
+              )}
+              {draft && overdue && waitingSince && (
+                <span
+                  data-testid="overdue-indicator"
+                  title={`Waiting ${formatTimeAgo(waitingSince)}`}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-rose-600 dark:text-rose-300"
+                >
+                  <TriangleAlert className="h-3 w-3" />
+                  2+ days waiting
                 </span>
               )}
             </div>
