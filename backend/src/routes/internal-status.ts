@@ -367,4 +367,77 @@ router.post('/fix-replied-at', async (_req: Request, res: Response, next: NextFu
   }
 });
 
+// POST /api/internal/restore-discarded-drafts
+// Restores DISCARDED drafts back to APPROVED when the discard was caused by
+// a false "recruiter replied" detection (the internalDate/Date-header bug).
+// A discard is false if the candidate has no outbound message with inReplyTo set
+// (i.e. the only outbound messages are original outreach, not genuine replies).
+// Also clears candidate.repliedAt in those cases.
+router.post('/restore-discarded-drafts', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Find all DISCARDED drafts whose thread still has a candidate
+    const discardedDrafts = await prisma.emailDraft.findMany({
+      where: { status: 'DISCARDED' },
+      include: {
+        thread: {
+          include: {
+            messages: true,
+            mailbox: { select: { emailAddress: true } },
+          },
+        },
+      },
+    });
+
+    let restored = 0;
+    const processedCandidates = new Set<string>();
+
+    for (const draft of discardedDrafts) {
+      const thread = draft.thread;
+      if (!thread?.candidateId) continue;
+      const mailboxEmail = thread.mailbox?.emailAddress?.toLowerCase();
+      if (!mailboxEmail) continue;
+
+      // Check if the thread has any genuine outbound reply (inReplyTo set)
+      const outboundMsgs = thread.messages.filter(
+        (m) => m.fromAddress.toLowerCase() === mailboxEmail
+      );
+      const hasGenuineReply = outboundMsgs.some((m) => {
+        try {
+          const h = JSON.parse(typeof m.headers === 'string' ? m.headers : JSON.stringify(m.headers ?? {})) as { inReplyTo?: string };
+          return h.inReplyTo && h.inReplyTo.trim().length > 0;
+        } catch {
+          return false;
+        }
+      });
+
+      if (!hasGenuineReply) {
+        await prisma.emailDraft.update({
+          where: { id: draft.id },
+          data: { status: 'APPROVED' },
+        });
+        restored++;
+
+        // Clear repliedAt on the candidate (once per candidate)
+        if (!processedCandidates.has(thread.candidateId)) {
+          processedCandidates.add(thread.candidateId);
+          await prisma.candidate.update({
+            where: { id: thread.candidateId },
+            data: { repliedAt: null },
+          });
+        }
+      }
+    }
+
+    await logEvent(
+      'DISCARDED_DRAFTS_RESTORED',
+      { checked: discardedDrafts.length, restored },
+      'INFO'
+    );
+
+    res.json({ success: true, data: { checked: discardedDrafts.length, restored } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

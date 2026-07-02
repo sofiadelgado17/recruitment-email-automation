@@ -349,6 +349,11 @@ export async function fixRepliedAt(): Promise<{ success: boolean; data: { checke
   return res.data as { success: boolean; data: { checked: number; cleared: number } };
 }
 
+export async function restoreDiscardedDrafts(): Promise<{ success: boolean; data: { checked: number; restored: number } }> {
+  const res = await api.post('/internal/restore-discarded-drafts');
+  return res.data as { success: boolean; data: { checked: number; restored: number } };
+}
+
 export async function debugMailbox(email: string): Promise<{ success: boolean; data: unknown }> {
   const res = await api.get('/internal/debug/mailbox', { params: { email } });
   return res.data as { success: boolean; data: unknown };
