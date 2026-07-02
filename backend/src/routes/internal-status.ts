@@ -375,9 +375,12 @@ router.post('/fix-replied-at', async (_req: Request, res: Response, next: NextFu
 // Also clears candidate.repliedAt in those cases.
 router.post('/restore-discarded-drafts', async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    // Find all DISCARDED drafts whose thread still has a candidate
+    // Only restore drafts discarded in the last 24h — avoids resurfacing old
+    // intentionally-discarded work. The false discards from the timestamp bug
+    // all happened within the last reconcile/resync cycle.
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const discardedDrafts = await prisma.emailDraft.findMany({
-      where: { status: 'DISCARDED' },
+      where: { status: 'DISCARDED', updatedAt: { gte: since } },
       include: {
         thread: {
           include: {
