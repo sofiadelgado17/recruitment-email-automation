@@ -368,76 +368,75 @@ router.post('/fix-replied-at', async (_req: Request, res: Response, next: NextFu
 });
 
 // POST /api/internal/restore-discarded-drafts
-// Restores DISCARDED drafts back to APPROVED when the discard was caused by
-// a false "recruiter replied" detection (the internalDate/Date-header bug).
-// A discard is false if the candidate has no outbound message with inReplyTo set
-// (i.e. the only outbound messages are original outreach, not genuine replies).
-// Also clears candidate.repliedAt in those cases.
+// Restores all DISCARDED drafts from the last 24h back to APPROVED and clears
+// repliedAt on their candidates. Scoped to 24h to avoid surfacing old
+// intentionally-discarded work.
 router.post('/restore-discarded-drafts', async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    // Only restore drafts discarded in the last 24h — avoids resurfacing old
-    // intentionally-discarded work. The false discards from the timestamp bug
-    // all happened within the last reconcile/resync cycle.
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const discardedDrafts = await prisma.emailDraft.findMany({
       where: { status: 'DISCARDED', updatedAt: { gte: since } },
-      include: {
-        thread: {
-          include: {
-            messages: true,
-            mailbox: { select: { emailAddress: true } },
-          },
-        },
-      },
+      select: { id: true, thread: { select: { candidateId: true } } },
     });
 
     let restored = 0;
     const processedCandidates = new Set<string>();
 
     for (const draft of discardedDrafts) {
-      const thread = draft.thread;
-      if (!thread?.candidateId) continue;
-      const mailboxEmail = thread.mailbox?.emailAddress?.toLowerCase();
-      if (!mailboxEmail) continue;
-
-      // Check if the thread has any genuine outbound reply (inReplyTo set)
-      const outboundMsgs = thread.messages.filter(
-        (m) => m.fromAddress.toLowerCase() === mailboxEmail
-      );
-      const hasGenuineReply = outboundMsgs.some((m) => {
-        try {
-          const h = JSON.parse(typeof m.headers === 'string' ? m.headers : JSON.stringify(m.headers ?? {})) as { inReplyTo?: string };
-          return h.inReplyTo && h.inReplyTo.trim().length > 0;
-        } catch {
-          return false;
-        }
+      await prisma.emailDraft.update({
+        where: { id: draft.id },
+        data: { status: 'APPROVED' },
       });
+      restored++;
 
-      if (!hasGenuineReply) {
-        await prisma.emailDraft.update({
-          where: { id: draft.id },
-          data: { status: 'APPROVED' },
+      const candidateId = draft.thread?.candidateId;
+      if (candidateId && !processedCandidates.has(candidateId)) {
+        processedCandidates.add(candidateId);
+        await prisma.candidate.update({
+          where: { id: candidateId },
+          data: { repliedAt: null },
         });
-        restored++;
-
-        // Clear repliedAt on the candidate (once per candidate)
-        if (!processedCandidates.has(thread.candidateId)) {
-          processedCandidates.add(thread.candidateId);
-          await prisma.candidate.update({
-            where: { id: thread.candidateId },
-            data: { repliedAt: null },
-          });
-        }
       }
     }
 
-    await logEvent(
-      'DISCARDED_DRAFTS_RESTORED',
-      { checked: discardedDrafts.length, restored },
-      'INFO'
-    );
-
+    await logEvent('DISCARDED_DRAFTS_RESTORED', { checked: discardedDrafts.length, restored }, 'INFO');
     res.json({ success: true, data: { checked: discardedDrafts.length, restored } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/internal/debug/drafts
+// Returns all drafts from the last 48h grouped by status so we can see
+// exactly what happened to recently-approved work.
+router.get('/debug/drafts', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const drafts = await prisma.emailDraft.findMany({
+      where: { updatedAt: { gte: since } },
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+        thread: {
+          select: {
+            subject: true,
+            candidate: { select: { name: true, email: true } },
+            mailbox: { select: { emailAddress: true } },
+          },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    const byStatus: Record<string, typeof drafts> = {};
+    for (const d of drafts) {
+      byStatus[d.status] = byStatus[d.status] ?? [];
+      byStatus[d.status].push(d);
+    }
+
+    res.json({ success: true, data: { total: drafts.length, byStatus } });
   } catch (err) {
     next(err);
   }

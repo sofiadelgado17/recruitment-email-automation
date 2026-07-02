@@ -354,6 +354,11 @@ export async function restoreDiscardedDrafts(): Promise<{ success: boolean; data
   return res.data as { success: boolean; data: { checked: number; restored: number } };
 }
 
+export async function debugDrafts(): Promise<{ success: boolean; data: { total: number; byStatus: Record<string, unknown[]> } }> {
+  const res = await api.get('/internal/debug/drafts');
+  return res.data as { success: boolean; data: { total: number; byStatus: Record<string, unknown[]> } };
+}
+
 export async function debugMailbox(email: string): Promise<{ success: boolean; data: unknown }> {
   const res = await api.get('/internal/debug/mailbox', { params: { email } });
   return res.data as { success: boolean; data: unknown };

@@ -12,6 +12,7 @@ import {
   debugCandidate,
   fixRepliedAt,
   restoreDiscardedDrafts,
+  debugDrafts,
   type Candidate,
   type Mailbox,
   type EmailDraft,
@@ -770,13 +771,23 @@ function FixRepliedAtButton() {
 }
 
 function RestoreDiscardedDraftsButton() {
-  const [state, setState] = useState<{ running: boolean; result?: string }>({ running: false });
+  const [state, setState] = useState<{ running: boolean; result?: string; detail?: string }>({ running: false });
 
   const handleRestore = async () => {
     setState({ running: true });
     try {
-      const res = await restoreDiscardedDrafts();
-      setState({ running: false, result: `Restored ${res.data.restored} of ${res.data.checked} drafts` });
+      const [restoreRes, debugRes] = await Promise.all([
+        restoreDiscardedDrafts(),
+        debugDrafts(),
+      ]);
+      const counts = Object.entries(debugRes.data.byStatus)
+        .map(([s, arr]) => `${s}: ${arr.length}`)
+        .join(', ');
+      setState({
+        running: false,
+        result: `Restored ${restoreRes.data.restored} drafts`,
+        detail: `Last 48h totals — ${counts}`,
+      });
     } catch {
       setState({ running: false, result: 'Failed — check logs' });
     }
@@ -792,9 +803,8 @@ function RestoreDiscardedDraftsButton() {
         <RefreshCw className={cn('h-3.5 w-3.5', state.running && 'animate-spin')} />
         {state.running ? 'Restoring…' : 'Restore approved drafts'}
       </button>
-      {state.result && (
-        <p className="text-right text-[11px] text-fg-muted">{state.result}</p>
-      )}
+      {state.result && <p className="text-right text-[11px] text-fg-muted">{state.result}</p>}
+      {state.detail && <p className="text-right text-[11px] text-fg-muted opacity-70">{state.detail}</p>}
     </div>
   );
 }
