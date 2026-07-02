@@ -271,7 +271,14 @@ export default function EmailDrafts({ mailboxId }: Props) {
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['drafts', activeStatus, mailboxId],
-    queryFn: () => fetchDrafts({ status: activeStatus, limit: 100, mailboxId }),
+    queryFn: () => fetchDrafts({
+      status: activeStatus,
+      limit: 100,
+      mailboxId,
+      // Always include approved/sent drafts regardless of repliedAt so
+      // intentionally approved work is never hidden from the recruiter.
+      includeReplied: activeStatus !== 'PENDING',
+    }),
     staleTime: 15_000,
   });
 

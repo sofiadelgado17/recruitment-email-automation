@@ -268,6 +268,7 @@ export async function fetchDrafts(filters?: {
   mailboxId?: string;
   page?: number;
   limit?: number;
+  includeReplied?: boolean;
 }): Promise<PaginatedResponse<EmailDraft>> {
   const res = await api.get('/drafts', { params: filters });
   return res.data as PaginatedResponse<EmailDraft>;
