@@ -150,11 +150,13 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     if (status) where.status = status;
     if (mailboxId) where.thread = { ...(where.thread as object), mailboxId };
 
-    // By default, hide drafts for candidates who have already been replied to
-    // (either via the app or directly from Gmail/Superhuman). Only show them
-    // if the caller explicitly passes ?includeReplied=true.
+    // By default, hide PENDING drafts for candidates who have already been
+    // replied to (either via the app or directly from Gmail/Superhuman).
+    // APPROVED, SENT, and DISCARDED drafts are always shown — they represent
+    // intentional recruiter actions and should never disappear from the UI.
     const includeReplied = qs(req.query.includeReplied) === 'true';
-    if (!includeReplied) {
+    const isPendingOnlyView = !status || status === 'PENDING';
+    if (!includeReplied && isPendingOnlyView) {
       where.thread = {
         ...(where.thread as object),
         candidate: { repliedAt: null },
