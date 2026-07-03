@@ -28,6 +28,28 @@ import {
 import type { EmailDraft, OriginalMessage } from '../lib/api';
 import { toastError } from '../lib/toast';
 
+// Minimal typings for Web Speech API (not in all TS lib targets)
+interface SpeechRecognitionResult {
+  readonly 0: { transcript: string };
+}
+interface SpeechRecognitionResultList extends Iterable<SpeechRecognitionResult> {
+  readonly length: number;
+}
+interface SpeechRecognitionEvent extends Event {
+  readonly results: SpeechRecognitionResultList;
+}
+interface SpeechRecognitionInstance extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((e: SpeechRecognitionEvent) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
+
 interface Props {
   draft: EmailDraft | null;
   open: boolean;
@@ -199,7 +221,7 @@ export default function DraftReviewPane({
   const [dictateOpen, setDictateOpen] = useState(false);
   const [dictateNotes, setDictateNotes] = useState('');
   const [listening, setListening] = useState(false);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const lastEditNonce = useRef(editRequestNonce);
   // Snapshot of (draft id, original body, in-progress edit, editing flag) so
   // we can detect when a draft switch is about to discard unsaved edits.
@@ -289,20 +311,19 @@ export default function DraftReviewPane({
       recognitionRef.current?.stop();
       return;
     }
-    const SpeechRecognition =
-      (window as unknown as { SpeechRecognition?: typeof window.SpeechRecognition; webkitSpeechRecognition?: typeof window.SpeechRecognition }).SpeechRecognition ??
-      (window as unknown as { webkitSpeechRecognition?: typeof window.SpeechRecognition }).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
+    const w = window as unknown as { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor };
+    const SpeechRecognitionCtor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
       toastError('Dictation not supported', 'Your browser does not support speech recognition. Try typing your notes instead.');
       return;
     }
-    const recognition = new SpeechRecognition();
+    const recognition = new SpeechRecognitionCtor();
     recognition.continuous = true;
     recognition.interimResults = false;
     recognition.lang = 'en-US';
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       const transcript = Array.from(event.results)
-        .map((r) => r[0]?.transcript ?? '')
+        .map((r) => r[0].transcript)
         .join(' ');
       setDictateNotes((prev) => (prev ? `${prev} ${transcript}` : transcript).trim());
     };

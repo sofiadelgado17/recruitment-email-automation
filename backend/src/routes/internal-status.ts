@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { prisma } from '../db/client';
+import { logEvent } from '../services/monitoring.service';
 
 const router = Router();
 
