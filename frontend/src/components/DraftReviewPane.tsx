@@ -482,6 +482,7 @@ export default function DraftReviewPane({
                 ) : draft.bodyHtml ? (
                   <div className="rounded-xl border border-line bg-surface-base/40 overflow-hidden">
                     <iframe
+                      key={draft.updatedAt}
                       srcDoc={`<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13.5px;line-height:1.6;color:#1a1a1a;margin:16px;padding:0;}a{color:#0066cc;}p{margin:0 0 1em}</style></head><body>${draft.bodyHtml}</body></html>`}
                       sandbox="allow-same-origin"
                       className="w-full border-0"
