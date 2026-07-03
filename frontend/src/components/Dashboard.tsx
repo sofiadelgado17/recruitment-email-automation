@@ -948,6 +948,7 @@ export default function Dashboard({
   const syncHealth = syncHealthData?.data ?? [];
 
   const awaitingReply = candidates.filter((c) => {
+    if (!c.role) return false; // no role = spam/noise, don't count
     const status =
       c.replyStatus ??
       (c.repliedAt ? 'REPLIED' : c.threads?.length ? 'AWAITING_REPLY' : 'NEW');
