@@ -504,6 +504,18 @@ async function classifyAndDraft(opts: {
   const { classification, messageType, needsReview, confidence, role } = classificationResult;
 
   // ---- Routing decisions ----------------------------------------------------
+  // NO ROLE DETECTED: skip entirely. Emails where we can't identify a candidate
+  // role are almost always spam, bulk outreach, or non-recruiting noise. Don't
+  // create a candidate record — it clutters the pipeline and inflates counts.
+  if (role === null && messageType !== 'NOT_RECRUITING_RELATED') {
+    await logEvent(
+      'MESSAGE_SKIPPED_NO_ROLE',
+      { mailboxId: mailbox.id, messageId: parsed.externalMessageId, messageType, confidence },
+      'INFO'
+    );
+    return;
+  }
+
   // NOT_RECRUITING_RELATED: don't pollute the candidate table at all.
   if (messageType === 'NOT_RECRUITING_RELATED') {
     await logEvent(

@@ -406,6 +406,45 @@ router.post('/restore-discarded-drafts', async (_req: Request, res: Response, ne
   }
 });
 
+// POST /api/internal/purge-no-role-candidates
+// Marks IGNORED all candidates where no role was detected, and discards any
+// pending/approved drafts for them. These are almost always spam or bulk
+// outreach that slipped past the NOT_RECRUITING_RELATED filter.
+router.post('/purge-no-role-candidates', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const noRoleCandidates = await prisma.candidate.findMany({
+      where: { role: null, status: { not: 'IGNORED' } },
+      select: { id: true },
+    });
+
+    const ids = noRoleCandidates.map((c) => c.id);
+
+    const [ignoredCount, discardedCount] = await Promise.all([
+      prisma.candidate.updateMany({
+        where: { id: { in: ids } },
+        data: { status: 'IGNORED' },
+      }),
+      prisma.emailDraft.updateMany({
+        where: {
+          thread: { candidateId: { in: ids } },
+          status: { in: ['PENDING', 'APPROVED'] },
+        },
+        data: { status: 'DISCARDED' },
+      }),
+    ]);
+
+    await logEvent(
+      'NO_ROLE_CANDIDATES_PURGED',
+      { ignored: ignoredCount.count, draftsDiscarded: discardedCount.count },
+      'INFO'
+    );
+
+    res.json({ success: true, data: { ignored: ignoredCount.count, draftsDiscarded: discardedCount.count } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/internal/debug/drafts
 // Returns all drafts from the last 48h grouped by status so we can see
 // exactly what happened to recently-approved work.
