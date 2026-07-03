@@ -266,25 +266,50 @@ router.patch('/:id', async (req: Request, res: Response, next: NextFunction) => 
     }
 
     const id = String(req.params.id);
-    const draft = await prisma.emailDraft.findUnique({ where: { id } });
+    // Fetch draft with mailbox so we can reconstruct the HTML signature.
+    const draft = await prisma.emailDraft.findUnique({
+      where: { id },
+      include: { thread: { include: { mailbox: true } } },
+    });
     if (!draft) return next(createError('Draft not found', 404));
     if (draft.status !== 'PENDING') {
       return next(createError('Can only edit pending drafts', 400));
     }
 
-    // When the caller only sends bodyText (no explicit bodyHtml), auto-generate
-    // a simple bodyHtml so the iframe preview keeps consistent styling instead
-    // of falling back to the unstyled <pre> display path.
+    // When the caller only sends bodyText (no explicit bodyHtml), reconstruct
+    // bodyHtml from the edited text so the iframe preview stays styled and
+    // the sent email retains the mailbox's HTML signature.
     let updateData: typeof parsed.data = parsed.data;
     if (parsed.data.bodyText !== undefined && parsed.data.bodyHtml === undefined) {
-      const escaped = parsed.data.bodyText
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/\n/g, '<br>\n');
+      let coreBodyText = parsed.data.bodyText;
+      let sigHtml: string | null = null;
+
+      try {
+        sigHtml = await fetchMailboxSignature(draft.thread.mailbox.id);
+        if (sigHtml) {
+          const sigPlainText = htmlSignatureToPlainText(sigHtml);
+          const sigSuffix = '\n' + sigPlainText;
+          if (coreBodyText.endsWith(sigSuffix)) {
+            // Strip the plain-text signature so we can re-append the HTML version.
+            coreBodyText = coreBodyText.slice(0, coreBodyText.length - sigSuffix.length);
+          } else {
+            // User modified the signature area — don't re-append HTML version
+            // (would duplicate or conflict with what's in the edited text).
+            sigHtml = null;
+          }
+        }
+      } catch {
+        // Signature fetch failed — proceed with plain-text-only HTML.
+      }
+
+      const esc = (s: string) =>
+        s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>\n');
+
+      const coreHtml = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13.5px;line-height:1.6;color:#1a1a1a;margin:0;">${esc(coreBodyText)}</div>`;
+
       updateData = {
         ...parsed.data,
-        bodyHtml: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13.5px;line-height:1.6;color:#1a1a1a;margin:0;">${escaped}</div>`,
+        bodyHtml: sigHtml ? `${coreHtml}${sigHtml}` : coreHtml,
       };
     }
 

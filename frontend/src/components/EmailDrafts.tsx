@@ -426,8 +426,25 @@ export default function EmailDrafts({ mailboxId }: Props) {
   const updateMutation = useMutation({
     mutationFn: ({ id, bodyText }: { id: string; bodyText: string }) =>
       updateDraft(id, { bodyText }),
-    onSuccess: () => {
+    onSuccess: (response) => {
       toastSuccess('Draft updated');
+      const updated = response.data;
+      // Immediately patch the draft in every cached page so the iframe
+      // refreshes without waiting for the background refetch.
+      queryClient.setQueriesData<{ success: boolean; data: EmailDraft[]; meta: unknown }>(
+        { queryKey: ['drafts'] },
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            data: old.data.map((d) =>
+              d.id === updated.id
+                ? { ...d, bodyText: updated.bodyText, bodyHtml: updated.bodyHtml, updatedAt: updated.updatedAt }
+                : d
+            ),
+          };
+        }
+      );
       void queryClient.invalidateQueries({ queryKey: ['drafts'] });
     },
     onError: (err) => {
