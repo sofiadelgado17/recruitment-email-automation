@@ -272,9 +272,25 @@ router.patch('/:id', async (req: Request, res: Response, next: NextFunction) => 
       return next(createError('Can only edit pending drafts', 400));
     }
 
+    // When the caller only sends bodyText (no explicit bodyHtml), auto-generate
+    // a simple bodyHtml so the iframe preview keeps consistent styling instead
+    // of falling back to the unstyled <pre> display path.
+    let updateData: typeof parsed.data = parsed.data;
+    if (parsed.data.bodyText !== undefined && parsed.data.bodyHtml === undefined) {
+      const escaped = parsed.data.bodyText
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, '<br>\n');
+      updateData = {
+        ...parsed.data,
+        bodyHtml: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13.5px;line-height:1.6;color:#1a1a1a;margin:0;">${escaped}</div>`,
+      };
+    }
+
     const updated = await prisma.emailDraft.update({
       where: { id },
-      data: parsed.data,
+      data: updateData,
     });
 
     res.json({ success: true, data: updated });
