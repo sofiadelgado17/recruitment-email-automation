@@ -425,7 +425,9 @@ export default function EmailDrafts({ mailboxId }: Props) {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, bodyText }: { id: string; bodyText: string }) =>
-      updateDraft(id, { bodyText }),
+      // Clear bodyHtml so the display falls back to the plain-text version the
+      // user just edited, rather than showing a stale HTML rendering.
+      updateDraft(id, { bodyText, bodyHtml: null }),
     onSuccess: () => {
       toastSuccess('Draft updated');
       void queryClient.invalidateQueries({ queryKey: ['drafts'] });

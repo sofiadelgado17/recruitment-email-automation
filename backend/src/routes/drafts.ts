@@ -20,7 +20,7 @@ function qs(val: unknown): string | undefined {
 
 const updateDraftSchema = z.object({
   bodyText: z.string().optional(),
-  bodyHtml: z.string().optional(),
+  bodyHtml: z.string().nullable().optional(),
   subject: z.string().optional(),
 });
 

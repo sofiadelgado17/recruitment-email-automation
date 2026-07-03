@@ -281,7 +281,7 @@ export async function fetchDraft(id: string): Promise<SingleResponse<EmailDraft>
 
 export async function updateDraft(
   id: string,
-  data: { bodyText?: string; bodyHtml?: string; subject?: string }
+  data: { bodyText?: string; bodyHtml?: string | null; subject?: string }
 ): Promise<SingleResponse<EmailDraft>> {
   const res = await api.patch(`/drafts/${id}`, data);
   return res.data as SingleResponse<EmailDraft>;
