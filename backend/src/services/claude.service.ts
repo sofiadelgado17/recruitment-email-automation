@@ -491,6 +491,57 @@ Requirements:
   return parsed;
 }
 
+export async function rewriteDraftWithNotes(
+  currentBodyText: string,
+  notes: string,
+  candidateName: string,
+  caller: DraftCaller
+): Promise<DraftReplyResult> {
+  const firstName = deriveFirstName(caller);
+
+  const response = await client.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 2048,
+    system: CACHED_SYSTEM,
+    messages: [
+      {
+        role: 'user',
+        content: `You are ghostwriting a recruiting email as ${firstName} (${caller.email}).
+
+Below is the current draft reply to candidate ${candidateName}. The recruiter has provided notes with guidance on how to revise it. Rewrite the email incorporating those notes while keeping Archive's professional, concise tone.
+
+CURRENT DRAFT:
+${currentBodyText}
+
+RECRUITER NOTES / INSTRUCTIONS:
+${notes}
+
+Respond with a JSON object in this exact format (no markdown fences, no commentary):
+{
+  "subject": "<same subject as the original unless the notes say otherwise>",
+  "bodyText": "<plain text email body>",
+  "bodyHtml": "<HTML formatted email body>"
+}
+
+Requirements:
+- Incorporate all the recruiter's notes naturally into the reply
+- Keep Archive's communication style: concise, warm, direct, no corporate jargon
+- HTML and plain text must match in content
+- Do NOT add anything the notes don't call for`,
+      },
+    ],
+  });
+
+  const textContent = response.content.find((b) => b.type === 'text');
+  if (!textContent || textContent.type !== 'text') {
+    throw new Error('No text response from Claude');
+  }
+
+  const jsonMatch = textContent.text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('No JSON found in response');
+  return JSON.parse(jsonMatch[0]) as DraftReplyResult;
+}
+
 export async function generateDraftReply(
   thread: ThreadContext,
   caller: DraftCaller

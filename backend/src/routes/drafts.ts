@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db/client';
 import { createError } from '../middleware/error';
 import { createDraft, sendDraft as gmailSendDraft, fetchExamplesForMailbox, buildHandoffDraftContent, fetchMailboxSignature, htmlSignatureToPlainText } from '../services/gmail.service';
-import { classifyReply, generateDraftReply, generateHandoffDraftReply, getHandoffType } from '../services/claude.service';
+import { classifyReply, generateDraftReply, generateHandoffDraftReply, getHandoffType, rewriteDraftWithNotes } from '../services/claude.service';
 import { config } from '../config';
 import { logEvent } from '../services/monitoring.service';
 import { serializeEmailMessages } from '../lib/emailMessageSerializer';
@@ -571,6 +571,56 @@ router.post('/:id/regenerate', async (req: Request, res: Response, next: NextFun
       success: true,
       data: { ...result.draft, originalMessage: result.originalMessage },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/drafts/:id/dictate
+// Rewrites the draft body guided by recruiter notes (voice/typed).
+router.post('/:id/dictate', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = String(req.params.id);
+    const notes = typeof req.body?.notes === 'string' ? req.body.notes.trim() : '';
+    if (!notes) return next(createError('notes is required', 400));
+
+    const draft = await prisma.emailDraft.findUnique({
+      where: { id },
+      include: {
+        thread: {
+          include: {
+            candidate: true,
+            mailbox: true,
+          },
+        },
+      },
+    });
+
+    if (!draft) return next(createError('Draft not found', 404));
+    if (draft.status !== 'PENDING') return next(createError('Only PENDING drafts can be rewritten', 400));
+
+    const { thread } = draft;
+    const { candidate, mailbox } = thread;
+
+    const rewritten = await rewriteDraftWithNotes(
+      draft.bodyText,
+      notes,
+      candidate?.name ?? 'Candidate',
+      { email: mailbox.emailAddress, displayName: mailbox.displayName }
+    );
+
+    const updated = await prisma.emailDraft.update({
+      where: { id },
+      data: {
+        bodyText: rewritten.bodyText,
+        bodyHtml: rewritten.bodyHtml ?? null,
+      },
+      include: draftWithThreadInclude,
+    });
+
+    await logEvent('DRAFT_DICTATED', { draftId: id, mailboxId: mailbox.id }, 'INFO');
+
+    res.json({ success: true, data: updated });
   } catch (err) {
     next(err);
   }

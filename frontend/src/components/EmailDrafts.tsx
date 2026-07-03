@@ -20,6 +20,7 @@ import {
   sendDraft,
   updateDraft,
   regenerateDraft,
+  dictateDraft,
   type EmailDraft,
 } from '../lib/api';
 import { cn, formatTimeAgo } from '../lib/utils';
@@ -474,6 +475,29 @@ export default function EmailDrafts({ mailboxId }: Props) {
         )
       : null;
 
+  const dictateLoadingToastRef = useRef<string | number | null>(null);
+  const dictateMutation = useMutation({
+    mutationFn: ({ id, notes }: { id: string; notes: string }) => {
+      dictateLoadingToastRef.current = toastLoading('Rewriting draft…');
+      return dictateDraft(id, notes);
+    },
+    onSuccess: () => {
+      if (dictateLoadingToastRef.current !== null) {
+        dismissToast(dictateLoadingToastRef.current);
+        dictateLoadingToastRef.current = null;
+      }
+      toastSuccess('Draft rewritten', 'Updated with your notes.');
+      void queryClient.invalidateQueries({ queryKey: ['drafts'] });
+    },
+    onError: (err) => {
+      if (dictateLoadingToastRef.current !== null) {
+        dismissToast(dictateLoadingToastRef.current);
+        dictateLoadingToastRef.current = null;
+      }
+      toastError('Could not rewrite draft', extractApiErrorMessage(err, 'Please try again.'));
+    },
+  });
+
   const handleOpen = useCallback(
     (draftId: string) => {
       const idx = drafts.findIndex((d) => d.id === draftId);
@@ -667,9 +691,14 @@ export default function EmailDrafts({ mailboxId }: Props) {
         onSend={(id) => sendMutation.mutate(id)}
         onUpdate={(id, bodyText) => updateMutation.mutate({ id, bodyText })}
         onRegenerate={(id) => regenerateMutation.mutate(id)}
+        onDictate={(id, notes) => dictateMutation.mutate({ id, notes })}
         regenerating={
           regenerateMutation.isPending &&
           regenerateMutation.variables === (activeDraft?.id ?? '')
+        }
+        dictating={
+          dictateMutation.isPending &&
+          (dictateMutation.variables as { id: string } | undefined)?.id === (activeDraft?.id ?? '')
         }
         regenerateError={regenerateErrorMessage}
         approving={

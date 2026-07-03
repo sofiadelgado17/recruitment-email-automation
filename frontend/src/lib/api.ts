@@ -307,6 +307,11 @@ export async function regenerateDraft(id: string): Promise<SingleResponse<EmailD
   return res.data as SingleResponse<EmailDraft>;
 }
 
+export async function dictateDraft(id: string, notes: string): Promise<SingleResponse<EmailDraft>> {
+  const res = await api.post(`/drafts/${id}/dictate`, { notes });
+  return res.data as SingleResponse<EmailDraft>;
+}
+
 // Threads
 export async function generateDraftForThread(threadId: string): Promise<SingleResponse<EmailDraft>> {
   const res = await api.post(`/emails/threads/${threadId}/draft`);

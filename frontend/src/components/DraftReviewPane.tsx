@@ -22,6 +22,8 @@ import {
   Pencil,
   Mail,
   ChevronLeft,
+  Mic,
+  MicOff,
 } from 'lucide-react';
 import type { EmailDraft, OriginalMessage } from '../lib/api';
 import { toastError } from '../lib/toast';
@@ -35,7 +37,9 @@ interface Props {
   onSend: (id: string) => void;
   onUpdate: (id: string, body: string) => void;
   onRegenerate: (id: string) => void;
+  onDictate: (id: string, notes: string) => void;
   regenerating: boolean;
+  dictating: boolean;
   regenerateError: string | null;
   approving?: boolean;
   sending?: boolean;
@@ -182,7 +186,9 @@ export default function DraftReviewPane({
   onSend,
   onUpdate,
   onRegenerate,
+  onDictate,
   regenerating,
+  dictating,
   regenerateError,
   approving = false,
   sending = false,
@@ -190,6 +196,10 @@ export default function DraftReviewPane({
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [editedBody, setEditedBody] = useState(draft?.bodyText ?? '');
+  const [dictateOpen, setDictateOpen] = useState(false);
+  const [dictateNotes, setDictateNotes] = useState('');
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
   const lastEditNonce = useRef(editRequestNonce);
   // Snapshot of (draft id, original body, in-progress edit, editing flag) so
   // we can detect when a draft switch is about to discard unsaved edits.
@@ -214,17 +224,13 @@ export default function DraftReviewPane({
     }
   }, [editedBody, editing, draft?.id]);
 
-  // When the active draft changes, exit edit mode and resync body. If the
-  // user had unsaved edits, surface a warning toast (Fix #4) — the alternative
-  // would be a blocking confirm, but a toast matches the existing style.
+  // When the active draft SWITCHES, exit edit mode and reset body. Warn if
+  // the user had unsaved edits. Depends only on draft?.id so a background
+  // refetch updating bodyText on the *same* draft doesn't clobber in-progress edits.
   useEffect(() => {
     const prev = prevDraftRef.current;
-    if (
-      prev.editing &&
-      prev.id !== undefined &&
-      prev.id !== draft?.id &&
-      prev.editedBody !== prev.originalBody
-    ) {
+    if (draft?.id === prev.id) return; // same draft — handled by effect below
+    if (prev.editing && prev.id !== undefined && prev.editedBody !== prev.originalBody) {
       toastError(
         'Unsaved changes discarded',
         'You switched to another draft before saving your edits.'
@@ -232,13 +238,29 @@ export default function DraftReviewPane({
     }
     setEditing(false);
     setEditedBody(draft?.bodyText ?? '');
+    setDictateOpen(false);
+    setDictateNotes('');
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+    setListening(false);
     prevDraftRef.current = {
       id: draft?.id,
       originalBody: draft?.bodyText ?? '',
       editedBody: draft?.bodyText ?? '',
       editing: false,
     };
-  }, [draft?.id, draft?.bodyText]);
+  }, [draft?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When the server body updates on the same draft (e.g. after a save or
+  // regenerate), sync editedBody — but only when not actively editing so we
+  // don't clobber in-progress keystrokes.
+  useEffect(() => {
+    if (editing) return;
+    setEditedBody(draft?.bodyText ?? '');
+    prevDraftRef.current.originalBody = draft?.bodyText ?? '';
+  }, [draft?.bodyText, editing]);
 
   // Honor imperative edit requests (driven by `e` keyboard shortcut)
   useEffect(() => {
@@ -260,6 +282,53 @@ export default function DraftReviewPane({
     if (!draft) return;
     onUpdate(draft.id, editedBody);
     setEditing(false);
+  };
+
+  const toggleListening = () => {
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const SpeechRecognition =
+      (window as unknown as { SpeechRecognition?: typeof window.SpeechRecognition; webkitSpeechRecognition?: typeof window.SpeechRecognition }).SpeechRecognition ??
+      (window as unknown as { webkitSpeechRecognition?: typeof window.SpeechRecognition }).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      toastError('Dictation not supported', 'Your browser does not support speech recognition. Try typing your notes instead.');
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      const transcript = Array.from(event.results)
+        .map((r) => r[0]?.transcript ?? '')
+        .join(' ');
+      setDictateNotes((prev) => (prev ? `${prev} ${transcript}` : transcript).trim());
+    };
+    recognition.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+    recognition.onerror = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+    recognitionRef.current = recognition;
+    recognition.start();
+    setListening(true);
+  };
+
+  const handleDictateSubmit = () => {
+    if (!draft || !dictateNotes.trim()) return;
+    onDictate(draft.id, dictateNotes.trim());
+    setDictateOpen(false);
+    setDictateNotes('');
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+    setListening(false);
   };
 
   return (
@@ -417,6 +486,68 @@ export default function DraftReviewPane({
               {regenerateError && (
                 <p className="text-[12px] text-rose-700 dark:text-rose-300">{regenerateError}</p>
               )}
+
+              {/* Dictation panel */}
+              {dictateOpen && isPending && (
+                <div className="rounded-xl border border-accent-500/20 bg-accent-500/[0.04] p-4">
+                  <p className="mb-2.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.14em] text-fg-muted">
+                    <Mic className="h-3 w-3" />
+                    Dictate notes — AI will rewrite the email with them
+                  </p>
+                  <textarea
+                    value={dictateNotes}
+                    onChange={(e) => setDictateNotes(e.target.value)}
+                    placeholder="Speak or type your notes… e.g. 'mention that we saw their work at Stripe, ask if they're open to a call next week'"
+                    className="min-h-28 w-full resize-y rounded-lg border border-line-strong bg-surface-base/60 p-3 text-[13px] leading-relaxed text-fg-default placeholder:text-fg-subtle focus:border-accent-400 focus:outline-none"
+                    rows={4}
+                    autoFocus
+                  />
+                  {listening && (
+                    <p className="mt-1.5 flex items-center gap-1.5 text-[11.5px] text-accent-600 dark:text-accent-300">
+                      <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-rose-500" />
+                      Listening… speak now
+                    </p>
+                  )}
+                  <div className="mt-3 flex items-center gap-2">
+                    <Button
+                      onClick={handleDictateSubmit}
+                      disabled={!dictateNotes.trim() || dictating}
+                      className="bg-accent-500 text-white hover:bg-accent-400 disabled:opacity-50"
+                    >
+                      {dictating ? (
+                        <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                      ) : null}
+                      Rewrite email
+                    </Button>
+                    <button
+                      onClick={toggleListening}
+                      aria-label={listening ? 'Stop dictation' : 'Start dictation'}
+                      className={cn(
+                        'flex size-9 items-center justify-center rounded-md ring-1 ring-inset transition-colors',
+                        listening
+                          ? 'bg-rose-500/10 text-rose-600 ring-rose-500/25 hover:bg-rose-500/15 dark:text-rose-300'
+                          : 'bg-fg-strong/[0.04] text-fg-muted ring-line hover:bg-fg-strong/[0.08] hover:text-fg-strong'
+                      )}
+                    >
+                      {listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                    </button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setDictateOpen(false);
+                        setDictateNotes('');
+                        if (recognitionRef.current) {
+                          recognitionRef.current.stop();
+                          recognitionRef.current = null;
+                        }
+                        setListening(false);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -505,7 +636,7 @@ export default function DraftReviewPane({
                     <TooltipTrigger asChild>
                       <button
                         onClick={() => setEditing(true)}
-                        disabled={regenerating || editing}
+                        disabled={regenerating || editing || dictateOpen}
                         aria-label="Edit draft body"
                         className="flex size-9 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-fg-strong/[0.06] hover:text-fg-strong disabled:cursor-not-allowed disabled:opacity-40"
                       >
@@ -513,6 +644,31 @@ export default function DraftReviewPane({
                       </button>
                     </TooltipTrigger>
                     <TooltipContent>Edit body (e)</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => setDictateOpen((v) => !v)}
+                        disabled={regenerating || editing || dictating}
+                        aria-label="Dictate notes for AI rewrite"
+                        aria-pressed={dictateOpen}
+                        className={cn(
+                          'flex size-9 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-40',
+                          dictateOpen
+                            ? 'bg-accent-500/10 text-accent-600 dark:text-accent-300'
+                            : 'text-fg-muted hover:bg-fg-strong/[0.06] hover:text-fg-strong'
+                        )}
+                      >
+                        {dictating ? (
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Mic className="h-4 w-4" />
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {dictating ? 'Rewriting…' : 'Dictate notes for AI rewrite'}
+                    </TooltipContent>
                   </Tooltip>
                 </>
               )}
