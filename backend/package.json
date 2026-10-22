@@ -17,7 +17,7 @@
     "vercel-build": "prisma generate && prisma migrate deploy"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.132.1",
+    "@anthropic-ai/sdk": "^0.135.0",
     "@modelcontextprotocol/sdk": "1.32.1",
     "@prisma/client": "^5.22.0",
     "@vercel/functions": "1.6.0",
@@ -28,7 +28,7 @@
     "express-rate-limit": "^7.5.0",
     "google-auth-library": "^10.6.2",
     "googleapis": "^172.0.0",
-    "helmet": "^8.0.0",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
     "node-fetch": "^3.3.2",
     "zod": "^3.23.8"
@@ -39,11 +39,11 @@
     "@types/express": "^5.0.0",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.9.3",
-    "@types/supertest": "^6.0.2",
+    "@types/supertest": "^7.2.1",
     "@vitest/coverage-v8": "^4.1.7",
     "prisma": "^5.22.0",
-    "supertest": "^7.0.0",
-    "tsx": "^4.19.2",
+    "supertest": "^7.3.1",
+    "tsx": "^4.23.15",
     "typescript": "^5.7.2",
     "vitest": "^4.1.7"
   }
