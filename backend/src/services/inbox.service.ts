@@ -122,7 +122,7 @@ export function inboxItemsCte({ now, mailboxId }: CteParams): Prisma.Sql {
         END AS view,
         CASE WHEN d.status IN ('SCHEDULED', 'SENDING', 'SENT')
           THEN COALESCE(d."sentAt", d."scheduledSendAt", d."updatedAt")
-          ELSE d."createdAt"
+          ELSE COALESCE(replied_to."receivedAt", d."createdAt")
         END AS "sortAt",
         t."mailboxId" AS "mailboxId",
         CASE WHEN d.status IN ('PENDING', 'APPROVED')
@@ -131,17 +131,35 @@ export function inboxItemsCte({ now, mailboxId }: CteParams): Prisma.Sql {
         NULLIF(BTRIM(c.role), '') AS role
       FROM "EmailDraft" d
       JOIN "EmailThread" t ON t.id = d."threadId"
+      JOIN "Mailbox" mb ON mb.id = t."mailboxId"
       LEFT JOIN "Candidate" c ON c.id = t."candidateId"
+      -- The inbound message the draft answers: latest one not from the
+      -- mailbox at or before the draft (as drafts.ts pickOriginalMessage).
+      LEFT JOIN LATERAL (
+        SELECT m."receivedAt" FROM "EmailMessage" m
+        WHERE m."threadId" = d."threadId"
+          AND lower(m."fromAddress") <> lower(mb."emailAddress")
+          AND m."receivedAt" <= d."createdAt"
+        ORDER BY m."receivedAt" DESC LIMIT 1
+      ) replied_to ON TRUE
       WHERE d.status IN ('PENDING', 'APPROVED', 'FAILED', 'SCHEDULED', 'SENDING', 'SENT')
         AND (d.status <> 'SENT' OR d."sentAt" >= ${midnight})
         ${draftMailbox}
     ),
     candidate_items AS (
       SELECT c.id, 'candidate'::text AS kind, 'needs_review'::text AS view,
-        COALESCE(c."lastInboundAt", c."updatedAt") AS "sortAt",
+        -- Received time, never updatedAt (bumped by Lever/Gem syncs). The
+        -- message fallback covers rows lastInboundAt was never backfilled on.
+        COALESCE(c."lastInboundAt", latest_in."receivedAt", c."repliedAt", c."createdAt") AS "sortAt",
         c."mailboxId" AS "mailboxId", NULL::timestamp AS "expiresAt",
         NULLIF(BTRIM(c.role), '') AS role
       FROM "Candidate" c
+      LEFT JOIN LATERAL (
+        SELECT m."receivedAt" FROM "EmailThread" t1
+        JOIN "EmailMessage" m ON m."threadId" = t1.id
+        WHERE t1."candidateId" = c.id AND lower(m."fromAddress") = lower(c.email)
+        ORDER BY m."receivedAt" DESC LIMIT 1
+      ) latest_in ON c."lastInboundAt" IS NULL
       WHERE c.status = 'NEEDS_REVIEW'
         AND COALESCE(c."lastInboundAt", c."updatedAt") >= ${expiryCutoff}
         ${candidateMailbox}

@@ -143,6 +143,12 @@ export function formatEt(d: Date): string {
   return `${date}, ${etClock(d)} ET`;
 }
 
+/** An instant in ET with the year ("Oct 21, 2026, 3:04 PM ET"), for exact timestamps. */
+export function formatEtFull(d: Date): string {
+  const date = d.toLocaleDateString('en-US', { timeZone: ET, month: 'short', day: 'numeric', year: 'numeric' });
+  return `${date}, ${etClock(d)} ET`;
+}
+
 export type SnoozeKey = 'later' | 'tomorrow' | 'next_week';
 
 export function snoozePresets(now: Date): Array<{ key: SnoozeKey; label: string; until: Date }> {

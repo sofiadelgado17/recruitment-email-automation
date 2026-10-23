@@ -81,12 +81,12 @@ describe('lastActivity', () => {
       who: 'you',
     });
   });
-  it('falls back to the latest thread, then updatedAt', () => {
+  it('falls back to the latest thread, then createdAt (never updatedAt: syncs bump it)', () => {
     expect(lastActivity(c({ threads: [{ lastMessageAt: '2026-10-06T00:00:00.000Z' } as never] }))).toEqual({
       at: '2026-10-06T00:00:00.000Z',
       who: null,
     });
-    expect(lastActivity(c({}))).toEqual({ at: '2026-10-02T00:00:00.000Z', who: null });
+    expect(lastActivity(c({}))).toEqual({ at: '2026-10-01T00:00:00.000Z', who: null });
   });
 });
 

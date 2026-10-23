@@ -252,8 +252,8 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     }
 
     // The UI's "Last activity" column shows time-since the most recent
-    // thread message, falling back to candidate.updatedAt when no threads
-    // exist. Prisma can't orderBy a relation aggregate without
+    // thread message, falling back to candidate.createdAt when no threads
+    // exist (never updatedAt: Lever/Gem syncs bump it). Prisma can't orderBy a relation aggregate without
     // `_relationLoad`, so we over-fetch (3x the limit, capped at the
     // pagination max of 500), apply the JS sort by lastMessageAt, and
     // slice to limit. Initial orderBy stays on updatedAt so the over-fetch
@@ -283,12 +283,25 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       const [stamps, total] = await Promise.all([
         prisma.candidate.findMany({
           where,
-          select: { id: true, lastInboundAt: true, lastOutboundAt: true, updatedAt: true },
+          select: {
+            id: true,
+            lastInboundAt: true,
+            lastOutboundAt: true,
+            createdAt: true,
+            threads: { orderBy: { lastMessageAt: 'desc' }, take: 1, select: { lastMessageAt: true } },
+          },
         }),
         prisma.candidate.count({ where }),
       ]);
-      const at = (c: { lastInboundAt: Date | null; lastOutboundAt: Date | null; updatedAt: Date }) =>
-        Math.max(c.lastInboundAt?.getTime() ?? 0, c.lastOutboundAt?.getTime() ?? 0) || c.updatedAt.getTime();
+      // Never updatedAt: Lever/Gem syncs bump it without any message.
+      const at = (c: {
+        lastInboundAt: Date | null;
+        lastOutboundAt: Date | null;
+        createdAt: Date;
+        threads: Array<{ lastMessageAt: Date }>;
+      }) =>
+        Math.max(c.lastInboundAt?.getTime() ?? 0, c.lastOutboundAt?.getTime() ?? 0) ||
+        (c.threads[0]?.lastMessageAt ?? c.createdAt).getTime();
       const sign = sortDir === 'asc' ? 1 : -1;
       const pageIds = stamps
         .sort((a, b) => sign * (at(a) - at(b)) || a.id.localeCompare(b.id))
@@ -341,10 +354,10 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       .sort((a, b) => {
         const aTs =
           a.threads[0]?.lastMessageAt?.getTime() ??
-          a.updatedAt.getTime();
+          a.createdAt.getTime();
         const bTs =
           b.threads[0]?.lastMessageAt?.getTime() ??
-          b.updatedAt.getTime();
+          b.createdAt.getTime();
         return bTs - aTs;
       })
       .slice(0, limit);

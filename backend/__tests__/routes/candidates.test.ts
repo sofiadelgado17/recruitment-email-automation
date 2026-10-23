@@ -43,6 +43,7 @@ describe('/api/candidates', () => {
           mailbox: { id: 'mb-1', emailAddress: 'inbox@archive.com', provider: 'GMAIL' },
           threads: [],
           repliedAt: null,
+          createdAt: now,
           updatedAt: now,
         },
         {
@@ -54,6 +55,7 @@ describe('/api/candidates', () => {
           mailbox: { id: 'mb-1', emailAddress: 'inbox@archive.com', provider: 'GMAIL' },
           threads: [{ id: 't-1', subject: 'hi', lastMessageAt: now }],
           repliedAt: null,
+          createdAt: now,
           updatedAt: now,
         },
       ];
@@ -142,11 +144,13 @@ describe('/api/candidates', () => {
       expect(res.body.data[1].id).toBe('cand-B');
     });
 
-    it('falls back to updatedAt for candidates with no threads', async () => {
-      // A: no threads, fresh updatedAt. B: a thread but older lastMessageAt.
-      // The sort should use updatedAt for A and lastMessageAt for B.
+    it('falls back to createdAt (never updatedAt) for candidates with no threads', async () => {
+      // A: no threads, created long ago but updatedAt fresh from a Lever/Gem
+      // sync. B: a thread with a newer lastMessageAt than A's createdAt.
+      // The sort uses createdAt for A, so B comes first.
       const oldDate = new Date('2026-04-01T00:00:00Z');
       const newDate = new Date('2026-05-20T00:00:00Z');
+      const created = new Date('2026-03-01T00:00:00Z');
 
       const candA = {
         id: 'cand-A',
@@ -157,6 +161,7 @@ describe('/api/candidates', () => {
         mailbox: { id: 'mb-1', emailAddress: 'inbox@archive.com', provider: 'GMAIL' },
         threads: [],
         repliedAt: null,
+        createdAt: created,
         updatedAt: newDate,
       };
       const candB = {
@@ -168,6 +173,7 @@ describe('/api/candidates', () => {
         mailbox: { id: 'mb-1', emailAddress: 'inbox@archive.com', provider: 'GMAIL' },
         threads: [{ id: 't-B', subject: 'older', lastMessageAt: oldDate }],
         repliedAt: null,
+        createdAt: created,
         updatedAt: oldDate,
       };
 
@@ -179,8 +185,8 @@ describe('/api/candidates', () => {
         .set('Authorization', AUTH);
 
       expect(res.status).toBe(200);
-      expect(res.body.data[0].id).toBe('cand-A');
-      expect(res.body.data[1].id).toBe('cand-B');
+      expect(res.body.data[0].id).toBe('cand-B');
+      expect(res.body.data[1].id).toBe('cand-A');
     });
 
     it('includes role when present on the candidate row', async () => {

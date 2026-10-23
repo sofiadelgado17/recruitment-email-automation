@@ -10,6 +10,7 @@ import {
   inboxItemsSql,
   inboxRoleCountsSql,
   etMidnight,
+  type InboxCursor,
   type InboxRoleFilter,
   type InboxView,
 } from '../../src/services/inbox.service';
@@ -224,5 +225,94 @@ describe('inbox SQL (U0)', () => {
     const rows = await run<{ role: string | null; count: number }>(db, inboxRoleCountsSql({ now: NOW, view: 'needs_review' }));
     const byRole = Object.fromEntries(rows.map((r) => [String(r.role), Number(r.count)]));
     expect(byRole).toEqual({ Engineer: 2, Designer: 1, null: 2 });
+  });
+});
+
+// Row age = when the candidate's email arrived. Candidate.updatedAt is bumped
+// by Lever/Gem refreshes, so it must never stand in for the received time.
+describe('inbox SQL: sortAt is the received time', () => {
+  let db: PGlite;
+  const FRESH = iso(-60_000); // updatedAt: touched by a sync a minute ago
+
+  async function message(id: string, threadId: string, from: string, at: number) {
+    await db.query(
+      `INSERT INTO "EmailMessage" (id, "threadId", "mailboxId", "externalMessageId", "fromAddress", subject, "receivedAt")
+       VALUES ($1, $2, 'mb1', $1, $3, 's', $4)`,
+      [id, threadId, from, iso(at)]
+    );
+  }
+
+  beforeAll(async () => {
+    db = await migratedDb();
+    await db.exec(`INSERT INTO "Mailbox" (id, "emailAddress", "updatedAt") VALUES ('mb1', 'a@archive.com', now())`);
+    // NEEDS_REVIEW candidates: lastInboundAt never backfilled (inbound message
+    // 40d ago, a later recruiter message), no messages at all, and lastInboundAt set.
+    const cands: Array<[string, string, number | null, number]> = [
+      ['c_backfill', 'NEEDS_REVIEW', null, -60 * D],
+      ['c_nomsg', 'NEEDS_REVIEW', null, -5 * D],
+      ['c_set', 'NEEDS_REVIEW', -2 * D, -60 * D],
+      ['c_d1', 'INTERESTED', null, -60 * D],
+      ['c_d2', 'INTERESTED', null, -60 * D],
+    ];
+    for (const [id, status, inbound, created] of cands) {
+      await db.query(
+        `INSERT INTO "Candidate" (id, name, email, status, "mailboxId", "lastInboundAt", "createdAt", "updatedAt")
+         VALUES ($1, $1, upper($1) || '@X.com', $2, 'mb1', $3, $4, $5)`,
+        [id, status, inbound === null ? null : iso(inbound), iso(created), FRESH]
+      );
+      await db.query(
+        `INSERT INTO "EmailThread" (id, "candidateId", "mailboxId", "externalThreadId", subject) VALUES ($1, $2, 'mb1', $1, 's')`,
+        [`t_${id}`, id]
+      );
+    }
+    await message('m_b_in', 't_c_backfill', 'c_backfill@x.com', -40 * D);
+    await message('m_b_out', 't_c_backfill', 'a@archive.com', -H);
+    // d1 replies to an inbound message from 3 days ago; d2's thread has none.
+    await message('m_d1_in', 't_c_d1', 'C_D1@x.com', -3 * D);
+    await message('m_d1_out', 't_c_d1', 'a@archive.com', -2 * H);
+    for (const [id, created] of [['d1', -H], ['d2', -2 * D]] as const) {
+      await db.query(
+        `INSERT INTO "EmailDraft" (id, "threadId", subject, "bodyText", classification, confidence, status, "createdAt", "updatedAt")
+         VALUES ($1, $2, 's', 'b', 'INTERESTED', 0.9, 'PENDING', $3, $4)`,
+        [id, `t_c_${id}`, iso(created), FRESH]
+      );
+    }
+  }, 60_000);
+
+  // sortAt is a timestamp without zone holding UTC (Prisma reads it as UTC;
+  // PGlite would parse it as local time), so read it as epoch ms.
+  async function page(view: InboxView, order: 'newest' | 'oldest', limit = 100, cursor: InboxCursor | null = null) {
+    const sql = inboxItemsSql({ view, now: NOW, limit, order, cursor });
+    const r = await db.query<{ id: string; kind: 'draft' | 'candidate'; ms: number }>(
+      `SELECT id, kind, (extract(epoch FROM "sortAt") * 1000)::float8 AS ms FROM (${sql.text}) page`,
+      sql.values as unknown[]
+    );
+    return r.rows.map((x) => ({ id: x.id, kind: x.kind, sortAt: new Date(Number(x.ms)) }));
+  }
+  const rows = async (view: InboxView, order: 'newest' | 'oldest') =>
+    (await page(view, order)).map((x) => [x.id, x.sortAt.toISOString()]);
+
+  it('NEEDS_REVIEW candidates age from the inbound message, never updatedAt', async () => {
+    const expected = [
+      ['c_set', iso(-2 * D)],
+      ['c_nomsg', iso(-5 * D)], // no message: createdAt
+      ['c_backfill', iso(-40 * D)], // lastInboundAt NULL: latest message from the candidate
+    ];
+    expect(await rows('needs_review', 'newest')).toEqual(expected);
+    expect(await rows('needs_review', 'oldest')).toEqual([...expected].reverse());
+  });
+
+  it('live drafts age from the inbound message they reply to, else createdAt', async () => {
+    expect(await rows('interested', 'newest')).toEqual([
+      ['d2', iso(-2 * D)],
+      ['d1', iso(-3 * D)],
+    ]);
+    expect((await rows('interested', 'oldest')).map((r) => r[0])).toEqual(['d1', 'd2']);
+  });
+
+  it('keyset cursor still pages on the received time', async () => {
+    const [first] = await page('needs_review', 'oldest', 1);
+    expect(first.id).toBe('c_backfill');
+    expect((await page('needs_review', 'oldest', 10, first)).map((r) => r.id)).toEqual(['c_nomsg', 'c_set']);
   });
 });

@@ -85,25 +85,34 @@ describe('/api/candidates — R3 (search + filters, sort columns, bulk)', () => 
       mockPrisma.candidate.findMany.mockReset();
       mockPrisma.candidate.findMany
         .mockResolvedValueOnce([
-          { id: 'old', lastInboundAt: t(1), lastOutboundAt: null, updatedAt: t(1) },
-          { id: 'new', lastInboundAt: t(2), lastOutboundAt: t(9), updatedAt: t(1) },
-          { id: 'none', lastInboundAt: null, lastOutboundAt: null, updatedAt: t(5) },
+          { id: 'old', lastInboundAt: t(1), lastOutboundAt: null, threads: [], createdAt: t(0) },
+          { id: 'new', lastInboundAt: t(2), lastOutboundAt: t(9), threads: [], createdAt: t(0) },
+          // No in/out stamps: latest thread message, else createdAt — never
+          // updatedAt, which Lever/Gem syncs bump.
+          { id: 'none', lastInboundAt: null, lastOutboundAt: null, threads: [{ lastMessageAt: t(5) }], createdAt: t(0) },
+          { id: 'fresh', lastInboundAt: null, lastOutboundAt: null, threads: [], createdAt: t(0), updatedAt: t(23) },
         ])
         .mockResolvedValueOnce([
           { id: 'none', threads: [], updatedAt: t(5) },
           { id: 'new', threads: [], updatedAt: t(1) },
         ]);
-      mockPrisma.candidate.count.mockResolvedValueOnce(3);
+      mockPrisma.candidate.count.mockResolvedValueOnce(4);
 
       const res = await request(app)
         .get('/api/candidates?sort=lastActivity&dir=desc&limit=2')
         .set('Authorization', AUTH)
         .expect(200);
 
-      expect(findManyArgs(0).select).toEqual({ id: true, lastInboundAt: true, lastOutboundAt: true, updatedAt: true });
+      expect(findManyArgs(0).select).toEqual({
+        id: true,
+        lastInboundAt: true,
+        lastOutboundAt: true,
+        createdAt: true,
+        threads: { orderBy: { lastMessageAt: 'desc' }, take: 1, select: { lastMessageAt: true } },
+      });
       expect(findManyArgs(1).where).toEqual({ id: { in: ['new', 'none'] } });
       expect(res.body.data.map((c: { id: string }) => c.id)).toEqual(['new', 'none']);
-      expect(res.body.meta).toEqual({ total: 3, page: 1, limit: 2 });
+      expect(res.body.meta).toEqual({ total: 4, page: 1, limit: 2 });
     });
   });
 

@@ -41,7 +41,8 @@ export function lastActivity(c: Candidate): { at: string; who: 'them' | 'you' | 
   if (inbound || outbound) {
     return inbound >= outbound ? { at: c.lastInboundAt!, who: 'them' } : { at: c.lastOutboundAt!, who: 'you' };
   }
-  return { at: c.threads?.[0]?.lastMessageAt ?? c.updatedAt, who: null };
+  // Never updatedAt: Lever/Gem syncs bump it without any message.
+  return { at: c.threads?.[0]?.lastMessageAt ?? c.createdAt, who: null };
 }
 
 // ── Filters ──────────────────────────────────────────────────────────────

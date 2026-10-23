@@ -1,10 +1,10 @@
 import { Briefcase, Eye, Mail, Pencil } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
+import { cn, formatAge } from '@/lib/utils';
 import type { ConfidenceLabel, DraftPresenceEntry } from '@/lib/api';
 import { replyLabel } from '@/lib/candidates';
-import { labelFor } from '@/lib/inbox';
+import { formatEtFull, labelFor } from '@/lib/inbox';
 
 /** Interested / Unsure / Not interested — words only, semantic colour. */
 export function LabelChip({
@@ -128,6 +128,21 @@ export function MailboxLine({ email, className }: { email: string; className?: s
         <Mail aria-hidden className="size-3 shrink-0" />
         <span className="min-w-0 truncate">{`From ${email}`}</span>
       </span>
+    </WithTip>
+  );
+}
+
+/**
+ * Row age ("2h", "56d") since the candidate's email arrived (`at` = the
+ * item's sortAt); the tooltip has the exact time in ET.
+ */
+export function AgeStamp({ ageMs, at, verb = 'Received' }: { ageMs: number; at: string; verb?: 'Received' | 'Sent' }) {
+  const exact = `${verb} ${formatEtFull(new Date(at))}`;
+  return (
+    <WithTip tip={exact}>
+      <time dateTime={at} aria-label={exact} className="shrink-0 text-xs tabular-nums text-muted-foreground">
+        {formatAge(ageMs)}
+      </time>
     </WithTip>
   );
 }

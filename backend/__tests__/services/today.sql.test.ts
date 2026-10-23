@@ -163,7 +163,8 @@ describe('today summary SQL (R4)', () => {
   });
 
   it('reports the oldest waiting item across the three views', () => {
-    expect(all.oldestWaitingAt).toBe(iso(-(20 * D + 20 * H)));
+    // d_mb2 (drafted 30 min ago) answers m_mb2, received 30 days ago.
+    expect(all.oldestWaitingAt).toBe(iso(-30 * D));
   });
 
   it('counts live PENDING/APPROVED drafts expiring within 24h (not FAILED)', () => {

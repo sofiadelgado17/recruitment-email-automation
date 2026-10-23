@@ -9,10 +9,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import type { InboxItem, InboxView } from '@/lib/api';
 import { VIEWS, itemKey, type RoleGroup } from '@/lib/inbox';
-import { formatAge, initials } from '@/lib/utils';
+import { initials } from '@/lib/utils';
 import QueryError from '@/components/shell/QueryError';
 import { cn } from '@/lib/utils';
-import { LabelChip, MailboxLine, NeedsReviewChip, PresenceChip, RoleLine } from './chips';
+import { AgeStamp, LabelChip, MailboxLine, NeedsReviewChip, PresenceChip, RoleLine } from './chips';
 import DraftFlags from './DraftFlags';
 
 export { itemKey } from '@/lib/inbox';
@@ -84,7 +84,7 @@ const Row = memo(function Row({ item, rowKey, selected, focused, highlighted, ch
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="flex items-baseline justify-between gap-2">
             <span className="truncate font-medium text-foreground">{name}</span>
-            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatAge(item.ageMs)}</span>
+            <AgeStamp ageMs={item.ageMs} at={item.sortAt} verb={item.view === 'sent_today' ? 'Sent' : 'Received'} />
           </span>
           <RoleLine role={item.candidate?.role} />
           {/* Wraps rather than clipping: the status chips drop below a long address. */}
