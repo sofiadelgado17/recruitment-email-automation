@@ -23,6 +23,7 @@ import { loopInSentence } from '../lib/handoffLoopIn';
 import { ccFirstName, resolveDraftCc, NO_CC } from './draftCc.service';
 import type { Mailbox, EmailThread, Prisma } from '@prisma/client';
 import { LIVE_DRAFT_STATUSES, CANCELABLE_DRAFT_STATUSES } from '../lib/draftStatus';
+import { matchOutreachRole } from '../lib/outreachTemplates';
 
 /**
  * Serialize an OAuth2 / service-account credentials object for storage.
@@ -606,8 +607,30 @@ export async function classifyAndDraft(opts: {
     return;
   }
 
-  const { classification, messageType, confidence, role } = classificationResult;
+  const { classification, messageType, confidence } = classificationResult;
   let { needsReview } = classificationResult;
+
+  // If the classifier found no role, check the thread's outbound messages
+  // against registered outreach templates. This covers sequences that never
+  // name a job title in the email body (e.g. "adding to our marketing team").
+  const outboundBodies = allMessages
+    .filter((m) => isMailboxOwnAddress(mailbox, m.fromAddress))
+    .map((m) => m.bodyText ?? m.bodyHtml);
+  const role: string | null =
+    classificationResult.role ?? matchOutreachRole(outboundBodies);
+
+  if (role !== null && classificationResult.role === null) {
+    await logEvent(
+      'CANDIDATE_ROLE_DETECTED',
+      {
+        mailboxId: mailbox.id,
+        messageId: parsed.externalMessageId,
+        role,
+        via: 'outreach_template',
+      },
+      'INFO'
+    );
+  }
 
   // A thread the mailbox wrote on (outreach), one already linked to a
   // candidate, or mail from a known candidate is never dropped as noise (M15).
