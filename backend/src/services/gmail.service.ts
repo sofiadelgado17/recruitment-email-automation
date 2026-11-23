@@ -622,18 +622,18 @@ export async function classifyAndDraft(opts: {
     recruitingContext.knownCandidate;
 
   // ---- Routing decisions ----------------------------------------------------
-  // NO ROLE DETECTED: skip entirely. Emails where we can't identify a candidate
-  // role are almost always spam, bulk outreach, or non-recruiting noise. Don't
-  // create a candidate record — it clutters the pipeline and inflates counts.
-  // A follow-up in an existing conversation often names no role, so that
-  // case is classified as usual.
+  // NO ROLE DETECTED: route to NEEDS_REVIEW so a recruiter can assign the role
+  // manually. Previously this was a hard skip, but that silently lost replies
+  // to vague outreach templates that never named a job title (e.g. "adding to
+  // our marketing team"). A human always gets a chance to review before we act.
+  // NOT_RECRUITING_RELATED messages still get their own gate below.
   if (role === null && messageType !== 'NOT_RECRUITING_RELATED' && !inRecruitingContext) {
     await logEvent(
       'MESSAGE_SKIPPED_NO_ROLE',
       { mailboxId: mailbox.id, messageId: parsed.externalMessageId, messageType, confidence },
       'INFO'
     );
-    return;
+    needsReview = true;
   }
 
   // NOT_RECRUITING_RELATED: don't pollute the candidate table, but only when
